@@ -40,6 +40,7 @@ def load_dataset(path: str | Path) -> tuple:
     df_etudiants["id_etudiant"] = df_etudiants["id_etudiant"].astype(str)
     email_map = df_etudiants.set_index("id_etudiant")["Email_Etudiant"].to_dict()
     df_abs["email"] = df_abs["id_etudiant"].map(email_map).fillna("inconnu@esith.net")
+    df_abs["email"] = df_abs["email"].str.replace("@esith.ma", "@esith.net", regex=False)
 
     # --- Normalisation df_notes ---
     df_notes["id_etudiant"] = df_notes["id_etudiant"].astype(str)
