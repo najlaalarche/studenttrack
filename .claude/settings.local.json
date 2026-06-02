@@ -1,0 +1,18 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(Get-ChildItem *)",
+      "PowerShell(cd \"C:\\\\Users\\\\HP\\\\Downloads\\\\studenttrack\"; Start-Process python -ArgumentList \"backend/api/app.py\" -WorkingDirectory \"C:\\\\Users\\\\HP\\\\Downloads\\\\studenttrack\" -WindowStyle Hidden; Start-Sleep -Seconds 3; try { $r = Invoke-RestMethod -Uri \"http://localhost:5050/api/stats\" -TimeoutSec 5; $r | ConvertTo-Json } catch { $_.Exception.Message })",
+      "Bash(python backend/api/app.py)",
+      "Bash(curl -s http://localhost:5050/api/stats)",
+      "PowerShell(New-Item *)",
+      "Bash(npm run *)",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\" http://localhost:5173)",
+      "Bash(python backend/ingestion/reader.py)",
+      "Bash(python *)",
+      "Bash(pkill -f \"python backend/api/app.py\")",
+      "Bash(curl -s http://localhost:5050/api/etudiant/20001)",
+      "Bash(python3 -c ' *)"
+    ]
+  }
+}

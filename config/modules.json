@@ -1,0 +1,7 @@
+{
+  "_info": "Seuils configurables — les volumes viennent du dataset directement",
+  "_seuils": {
+    "alerte_pct": 20,
+    "exclusion_pct": 50
+  }
+}
