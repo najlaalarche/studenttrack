@@ -16,25 +16,25 @@ const S = {
 };
 
 function RiskRadar({ profil }) {
-  const mods     = profil.modules || [];
-  const avgNj    = mods.length > 0 ? mods.reduce((s, m) => s + m.taux_nj, 0) / mods.length : 0;
-  const avgTotal = mods.length > 0 ? mods.reduce((s, m) => s + m.taux_total, 0) / mods.length : 0;
-  const data = [
-    { subject: "Abs NJ",      value: Math.round(avgNj) },
-    { subject: "Abs Total",   value: Math.round(avgTotal) },
-    { subject: "Risque Notes", value: Math.round(profil.score_notes || 0) },
-  ];
-  const color = profil.score_global >= 70 ? "#EF4444" : profil.score_global >= 40 ? "#F59E0B" : "#8DC63F";
+  const mods   = profil.modules || [];
+  const maxNj  = mods.length > 0 ? Math.max(...mods.map(m => m.taux_nj)) : 0;
+  const color  = maxNj >= 50 ? "#EF4444" : maxNj >= 20 ? "#F59E0B" : "#8DC63F";
+  const data   = mods.map(m => ({
+    subject: m.module.length > 16 ? m.module.substring(0, 16) + "…" : m.module,
+    value:  parseFloat(m.taux_nj.toFixed(1)),
+    seuil:  20,
+  }));
   return (
     <div style={{ backgroundColor: "#FFFFFF", border: "1px solid #E2E8F0", borderRadius: 8, padding: "16px 16px 8px", boxShadow: "0 1px 3px rgba(0,0,0,0.06)", height: "100%" }}>
-      <div style={{ fontSize: 12, fontWeight: 700, color: "#1a3a6b", marginBottom: 4 }}>Profil de risque</div>
-      <ResponsiveContainer width="100%" height={200}>
-        <RadarChart data={data} margin={{ top: 10, right: 20, bottom: 10, left: 20 }}>
+      <div style={{ fontSize: 12, fontWeight: 700, color: "#1a3a6b", marginBottom: 4 }}>Absences NJ par module</div>
+      <ResponsiveContainer width="100%" height={220}>
+        <RadarChart data={data} margin={{ top: 15, right: 30, bottom: 15, left: 30 }}>
           <PolarGrid stroke="#E2E8F0" />
-          <PolarAngleAxis dataKey="subject" tick={{ fill: "#64748b", fontSize: 11 }} />
-          <PolarRadiusAxis angle={90} domain={[0, 100]} tick={{ fill: "#94a3b8", fontSize: 9 }} tickCount={4} />
-          <Radar dataKey="value" stroke={color} fill={color} fillOpacity={0.25} strokeWidth={2} />
-          <Tooltip formatter={(v) => `${v}%`} contentStyle={{ fontSize: 12, borderRadius: 6, border: "1px solid #E2E8F0" }} />
+          <PolarAngleAxis dataKey="subject" tick={{ fill: "#64748b", fontSize: 10 }} />
+          <PolarRadiusAxis angle={90} domain={[0, 100]} tick={{ fill: "#94a3b8", fontSize: 9 }} tickCount={6} />
+          <Radar name="Seuil 20%" dataKey="seuil" stroke="#F59E0B" fill="none" strokeDasharray="4 4" strokeWidth={1.5} />
+          <Radar name="Abs NJ %" dataKey="value" stroke={color} fill={color} fillOpacity={0.3} strokeWidth={2} />
+          <Tooltip formatter={(v, name) => name === "Seuil 20%" ? [null, null] : [`${v}%`, "Abs NJ"]} contentStyle={{ fontSize: 12, borderRadius: 6, border: "1px solid #E2E8F0" }} />
         </RadarChart>
       </ResponsiveContainer>
     </div>
