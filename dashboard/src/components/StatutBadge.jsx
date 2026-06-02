@@ -1,10 +1,10 @@
 export default function StatutBadge({ statut, size = "sm" }) {
   const map = {
-    AUTORISE: { bg: "rgba(34,197,94,0.12)",  border: "rgba(34,197,94,0.3)",  color: "#22C55E", label: "AUTORISÉ" },
-    AVERTI:   { bg: "rgba(249,115,22,0.12)", border: "rgba(249,115,22,0.3)", color: "#F97316", label: "AVERTI" },
-    EXCLU:    { bg: "rgba(239,68,68,0.12)",  border: "rgba(239,68,68,0.3)",  color: "#EF4444", label: "EXCLU" },
+    AUTORISE: { bg: "rgba(141,198,63,0.12)",  border: "rgba(141,198,63,0.4)",  color: "#5a9e14", label: "AUTORISÉ" },
+    AVERTI:   { bg: "rgba(245,158,11,0.12)",  border: "rgba(245,158,11,0.4)",  color: "#d97706", label: "AVERTI"   },
+    EXCLU:    { bg: "rgba(239,68,68,0.12)",   border: "rgba(239,68,68,0.35)",  color: "#dc2626", label: "EXCLU"    },
   };
-  const s = map[statut] ?? { bg: "rgba(100,116,139,0.12)", border: "rgba(100,116,139,0.3)", color: "#64748B", label: statut ?? "—" };
+  const s = map[statut] ?? { bg: "rgba(100,116,139,0.1)", border: "rgba(100,116,139,0.3)", color: "#64748b", label: statut ?? "—" };
   const px = size === "lg" ? "10px 14px" : "4px 10px";
   const fs = size === "lg" ? "12px" : "11px";
   return (
@@ -15,7 +15,7 @@ export default function StatutBadge({ statut, size = "sm" }) {
       padding: px,
       borderRadius: 6,
       fontSize: fs,
-      fontWeight: 600,
+      fontWeight: 700,
       letterSpacing: "0.04em",
       display: "inline-block",
       whiteSpace: "nowrap",

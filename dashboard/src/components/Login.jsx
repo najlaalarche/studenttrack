@@ -101,11 +101,11 @@ export default function Login({ onLogin }) {
         }}
       >
         {/* Logo ESITH */}
-        <div style={{ textAlign: "center", marginBottom: 20 }}>
+        <div style={{ textAlign: "center", marginBottom: 20, padding: "10px 0", backgroundColor: "transparent" }}>
           <img
             src="/logo-esith.png"
             alt="ESITH"
-            style={{ height: 72, objectFit: "contain" }}
+            style={{ height: 72, objectFit: "contain", display: "block", margin: "0 auto" }}
           />
         </div>
 

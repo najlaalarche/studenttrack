@@ -11,19 +11,27 @@ export default function Sidebar({ active, onNav, onLogout, userName }) {
       position: "fixed", top: 0, left: 0, height: "100vh",
       width: 220, display: "flex", flexDirection: "column",
       padding: "20px 12px",
-      backgroundColor: "#111118",
-      borderRight: "1px solid #1E1E2E",
+      backgroundColor: "#FFFFFF",
+      borderRight: "1px solid #E2E8F0",
       zIndex: 20,
     }}>
-      {/* Logo */}
-      <div style={{ padding: "4px 8px 20px" }}>
-        <div style={{ fontSize: 11, fontWeight: 600, letterSpacing: "0.12em", textTransform: "uppercase", color: "#6366F1", marginBottom: 2 }}>
-          ESITH
+      {/* Logo + titre */}
+      <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "4px 8px 20px" }}>
+        <img
+          src="/logo-esith.png"
+          alt="ESITH"
+          style={{ height: 32, width: 32, objectFit: "contain", flexShrink: 0 }}
+          onError={(e) => { e.target.style.display = "none"; }}
+        />
+        <div>
+          <div style={{ fontSize: 11, fontWeight: 600, letterSpacing: "0.12em", textTransform: "uppercase", color: "#8DC63F", lineHeight: 1 }}>
+            ESITH
+          </div>
+          <div style={{ fontSize: 15, fontWeight: 700, color: "#1a3a6b", lineHeight: 1.2 }}>StudentTrack</div>
         </div>
-        <div style={{ fontSize: 16, fontWeight: 700, color: "#F8FAFC" }}>StudentTrack</div>
       </div>
 
-      <div style={{ height: 1, backgroundColor: "#1E1E2E", marginBottom: 12 }} />
+      <div style={{ height: 1, backgroundColor: "#E2E8F0", marginBottom: 12 }} />
 
       {/* Nav */}
       <nav style={{ display: "flex", flexDirection: "column", gap: 2, flex: 1 }}>
@@ -36,16 +44,17 @@ export default function Sidebar({ active, onNav, onLogout, userName }) {
               style={{
                 display: "flex", alignItems: "center", gap: 10,
                 padding: "8px 10px", borderRadius: 6,
-                backgroundColor: isActive ? "#1E1E2E" : "transparent",
-                color: isActive ? "#F8FAFC" : "#64748B",
-                fontWeight: isActive ? 500 : 400,
+                backgroundColor: isActive ? "#eef2fb" : "transparent",
+                color: isActive ? "#1a3a6b" : "#64748b",
+                fontWeight: isActive ? 600 : 400,
                 fontSize: 13,
                 border: "none", cursor: "pointer", textAlign: "left", width: "100%",
+                borderLeft: isActive ? "3px solid #1a3a6b" : "3px solid transparent",
               }}
-              onMouseEnter={e => { if (!isActive) e.currentTarget.style.backgroundColor = "#16161F"; }}
+              onMouseEnter={e => { if (!isActive) e.currentTarget.style.backgroundColor = "#F0F4F8"; }}
               onMouseLeave={e => { if (!isActive) e.currentTarget.style.backgroundColor = "transparent"; }}
             >
-              <span style={{ fontSize: 14, opacity: 0.7 }}>{item.icon}</span>
+              <span style={{ fontSize: 14, opacity: isActive ? 1 : 0.6 }}>{item.icon}</span>
               <span>{item.label}</span>
             </button>
           );
@@ -53,9 +62,9 @@ export default function Sidebar({ active, onNav, onLogout, userName }) {
       </nav>
 
       {/* Footer */}
-      <div style={{ borderTop: "1px solid #1E1E2E", paddingTop: 12 }}>
+      <div style={{ borderTop: "1px solid #E2E8F0", paddingTop: 12 }}>
         {userName && (
-          <div style={{ padding: "6px 10px", fontSize: 12, color: "#94A3B8", marginBottom: 4, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+          <div style={{ padding: "6px 10px", fontSize: 12, color: "#1a3a6b", fontWeight: 500, marginBottom: 4, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
             {userName}
           </div>
         )}
@@ -64,11 +73,11 @@ export default function Sidebar({ active, onNav, onLogout, userName }) {
           style={{
             display: "flex", alignItems: "center", gap: 8,
             padding: "8px 10px", borderRadius: 6, width: "100%",
-            backgroundColor: "transparent", color: "#64748B",
+            backgroundColor: "transparent", color: "#64748b",
             fontSize: 12, border: "none", cursor: "pointer",
           }}
-          onMouseEnter={e => e.currentTarget.style.color = "#94A3B8"}
-          onMouseLeave={e => e.currentTarget.style.color = "#64748B"}
+          onMouseEnter={e => e.currentTarget.style.color = "#1a3a6b"}
+          onMouseLeave={e => e.currentTarget.style.color = "#64748b"}
         >
           <span>←</span><span>Déconnexion</span>
         </button>
