@@ -114,7 +114,7 @@ def calculer_profils(
         row0 = groupe.iloc[0]
         nom         = str(row0.get("nom", ""))
         prenom      = str(row0.get("prenom", ""))
-        email       = str(row0.get("email", "inconnu@esith.ma"))
+        email       = str(row0.get("email", "inconnu@esith.net"))
         filiere     = str(row0.get("filiere", ""))
         code_filiere= str(row0.get("code_filiere", ""))
         annee       = str(row0.get("annee", ""))

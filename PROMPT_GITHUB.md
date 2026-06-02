@@ -134,7 +134,7 @@ Le dashboard tourne sur http://localhost:5173
 
 | Rôle | Comment se connecter |
 |------|---------------------|
-| Étudiant | Email ESITH (ex: nadia.zouiten@esith.ma) |
+| Étudiant | Email ESITH (ex: nadia.zouiten@esith.net) |
 | Professeur | Nom + sélection du module |
 | Administration | Accès direct |
 
