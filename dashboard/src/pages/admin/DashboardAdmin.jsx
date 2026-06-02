@@ -1,10 +1,14 @@
 import { useEffect, useState } from "react";
-import { getStats, postSync } from "../../api.js";
+import { getStats, getEtudiants, postSync } from "../../api.js";
 import Sidebar from "../../components/Sidebar.jsx";
 import KpiCard from "../../components/KpiCard.jsx";
 import PageEtudiants from "./PageEtudiants.jsx";
 import PageAlertes from "./PageAlertes.jsx";
 import PageDetailEtudiant from "./PageDetailEtudiant.jsx";
+import {
+  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell,
+  PieChart, Pie, Legend,
+} from "recharts";
 
 function Spinner() {
   return (
@@ -15,14 +19,22 @@ function Spinner() {
   );
 }
 
+const CHART_CARD = { backgroundColor: "#FFFFFF", border: "1px solid #E2E8F0", borderRadius: 8, padding: "20px 20px 12px", boxShadow: "0 1px 3px rgba(0,0,0,0.06)" };
+const CHART_TITLE = { fontSize: 13, fontWeight: 700, color: "#1a3a6b", marginBottom: 16 };
+
 function VueEnsemble() {
-  const [stats, setStats]     = useState(null);
-  const [error, setError]     = useState(null);
-  const [loading, setLoading] = useState(true);
+  const [stats, setStats]         = useState(null);
+  const [etudiants, setEtudiants] = useState([]);
+  const [error, setError]         = useState(null);
+  const [loading, setLoading]     = useState(true);
 
   useEffect(() => {
-    getStats()
-      .then(d => { if (d.erreur) throw new Error(); setStats(d); })
+    Promise.all([getStats(), getEtudiants()])
+      .then(([s, e]) => {
+        if (s.erreur) throw new Error();
+        setStats(s);
+        setEtudiants(Array.isArray(e) ? e : []);
+      })
       .catch(() => setError("Connexion au serveur impossible. Vérifiez que le backend tourne sur le port 5050."))
       .finally(() => setLoading(false));
   }, []);
@@ -30,18 +42,81 @@ function VueEnsemble() {
   if (loading) return <Spinner />;
   if (error)   return <p style={{ fontSize: 13, color: "#dc2626" }}>{error}</p>;
 
+  const top10 = [...etudiants]
+    .sort((a, b) => b.score_global - a.score_global)
+    .slice(0, 10)
+    .map(e => ({
+      name: `${e.prenom} ${e.nom}`.length > 18 ? `${e.prenom} ${e.nom}`.substring(0, 18) + "…" : `${e.prenom} ${e.nom}`,
+      score: e.score_global,
+      color: e.score_global >= 70 ? "#EF4444" : e.score_global >= 40 ? "#F59E0B" : "#8DC63F",
+    }));
+
+  const pieData = [
+    { name: "Faible",   value: stats.faible,   color: "#8DC63F" },
+    { name: "Modéré",  value: stats.modere,   color: "#F59E0B" },
+    { name: "Critique", value: stats.critique, color: "#EF4444" },
+  ].filter(d => d.value > 0);
+
+  const total = stats.faible + stats.modere + stats.critique;
+  const renderLabel = ({ name, value }) => `${name} (${value} — ${total > 0 ? Math.round(value / total * 100) : 0}%)`;
+
   return (
     <div>
       <h2 style={{ fontSize: 18, fontWeight: 700, color: "#1a3a6b", marginBottom: 24 }}>Vue d'ensemble</h2>
+
+      {/* KPIs */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 12, marginBottom: 12 }}>
         <KpiCard label="Total étudiants"  value={stats.total_etudiants} color="#1a3a6b" icon="⊞" />
         <KpiCard label="En alerte"        value={stats.total_alertes}   color="#F59E0B" icon="◉" />
         <KpiCard label="Niveau critique"  value={stats.critique}        color="#EF4444" icon="▲" />
       </div>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 12 }}>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 12, marginBottom: 28 }}>
         <KpiCard label="Niveau modéré"   value={stats.modere}          color="#F59E0B" icon="◐" />
         <KpiCard label="Niveau faible"   value={stats.faible}          color="#8DC63F" icon="◯" />
         <KpiCard label="Total abs. NJ"   value={stats.total_abs_nj}    color="#64748b" icon="≡" />
+      </div>
+
+      {/* Graphiques */}
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+
+        {/* Bar chart Top 10 */}
+        <div style={CHART_CARD}>
+          <div style={CHART_TITLE}>Top étudiants à risque</div>
+          <ResponsiveContainer width="100%" height={280}>
+            <BarChart data={top10} layout="vertical" margin={{ top: 0, right: 20, bottom: 0, left: 10 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#E2E8F0" horizontal={false} />
+              <XAxis type="number" domain={[0, 100]} tick={{ fill: "#64748b", fontSize: 11 }} unit="" />
+              <YAxis type="category" dataKey="name" width={130} tick={{ fill: "#1e293b", fontSize: 11 }} />
+              <Tooltip formatter={(v) => [`${v}/100`, "Score risque"]} contentStyle={{ fontSize: 12, borderRadius: 6, border: "1px solid #E2E8F0" }} />
+              <Bar dataKey="score" radius={[0, 4, 4, 0]} maxBarSize={18}>
+                {top10.map((e, i) => <Cell key={i} fill={e.color} />)}
+              </Bar>
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
+
+        {/* Pie chart répartition */}
+        <div style={CHART_CARD}>
+          <div style={CHART_TITLE}>Répartition des risques</div>
+          <ResponsiveContainer width="100%" height={280}>
+            <PieChart>
+              <Pie
+                data={pieData}
+                cx="50%"
+                cy="45%"
+                outerRadius={90}
+                dataKey="value"
+                label={renderLabel}
+                labelLine={true}
+              >
+                {pieData.map((d, i) => <Cell key={i} fill={d.color} />)}
+              </Pie>
+              <Tooltip formatter={(v) => [`${v} étudiant(s)`, ""]} contentStyle={{ fontSize: 12, borderRadius: 6, border: "1px solid #E2E8F0" }} />
+              <Legend wrapperStyle={{ fontSize: 12, paddingTop: 8 }} />
+            </PieChart>
+          </ResponsiveContainer>
+        </div>
+
       </div>
     </div>
   );
@@ -96,12 +171,7 @@ export default function DashboardAdmin({ onLogout }) {
 
   return (
     <div style={{ minHeight: "100vh", backgroundColor: "#FFFFFF" }}>
-      <Sidebar
-        active={selected ? "etudiants" : page}
-        onNav={handleNav}
-        onLogout={onLogout}
-        userName="Administration"
-      />
+      <Sidebar active={selected ? "etudiants" : page} onNav={handleNav} onLogout={onLogout} userName="Administration" />
       <main style={{ marginLeft: 220, padding: "40px 36px", minHeight: "100vh" }}>
         {page === "overview"  && !selected && <VueEnsemble />}
         {page === "etudiants" && !selected && <PageEtudiants onSelectEtudiant={id => setSelected(id)} />}

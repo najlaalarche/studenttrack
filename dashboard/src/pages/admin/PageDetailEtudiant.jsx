@@ -3,6 +3,11 @@ import { getEtudiant } from "../../api.js";
 import KpiCard from "../../components/KpiCard.jsx";
 import ModuleBar from "../../components/ModuleBar.jsx";
 import StatutBadge from "../../components/StatutBadge.jsx";
+import {
+  RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis,
+  Radar, ResponsiveContainer, Tooltip,
+  BarChart, Bar, XAxis, YAxis, CartesianGrid, ReferenceLine, Legend,
+} from "recharts";
 
 const S = {
   th: { padding: "10px 16px", fontSize: 11, fontWeight: 600, letterSpacing: "0.07em", textTransform: "uppercase", color: "#64748b", textAlign: "left", borderBottom: "1px solid #E2E8F0", backgroundColor: "#F8FAFC" },
@@ -14,6 +19,58 @@ function Spinner() {
     <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: 200 }}>
       <div style={{ width: 24, height: 24, border: "2px solid #E2E8F0", borderTop: "2px solid #1a3a6b", borderRadius: "50%", animation: "spin 0.8s linear infinite" }} />
       <style>{`@keyframes spin { to { transform: rotate(360deg); }}`}</style>
+    </div>
+  );
+}
+
+function RiskRadar({ profil }) {
+  const mods     = profil.modules || [];
+  const avgNj    = mods.length > 0 ? mods.reduce((s, m) => s + m.taux_nj, 0) / mods.length : 0;
+  const avgTotal = mods.length > 0 ? mods.reduce((s, m) => s + m.taux_total, 0) / mods.length : 0;
+  const data = [
+    { subject: "Abs NJ",       value: Math.round(avgNj) },
+    { subject: "Abs Total",    value: Math.round(avgTotal) },
+    { subject: "Risque Notes", value: Math.round(profil.score_notes || 0) },
+  ];
+  const color = profil.score_global >= 70 ? "#EF4444" : profil.score_global >= 40 ? "#F59E0B" : "#8DC63F";
+  return (
+    <div style={{ backgroundColor: "#FFFFFF", border: "1px solid #E2E8F0", borderRadius: 8, padding: "16px 16px 8px", boxShadow: "0 1px 3px rgba(0,0,0,0.06)", height: "100%" }}>
+      <div style={{ fontSize: 12, fontWeight: 700, color: "#1a3a6b", marginBottom: 4 }}>Profil de risque</div>
+      <ResponsiveContainer width="100%" height={200}>
+        <RadarChart data={data} margin={{ top: 10, right: 20, bottom: 10, left: 20 }}>
+          <PolarGrid stroke="#E2E8F0" />
+          <PolarAngleAxis dataKey="subject" tick={{ fill: "#64748b", fontSize: 11 }} />
+          <PolarRadiusAxis angle={90} domain={[0, 100]} tick={{ fill: "#94a3b8", fontSize: 9 }} tickCount={4} />
+          <Radar dataKey="value" stroke={color} fill={color} fillOpacity={0.25} strokeWidth={2} />
+          <Tooltip formatter={(v) => `${v}%`} contentStyle={{ fontSize: 12, borderRadius: 6, border: "1px solid #E2E8F0" }} />
+        </RadarChart>
+      </ResponsiveContainer>
+    </div>
+  );
+}
+
+function ModulesBarChart({ modules }) {
+  const data = modules.map(m => ({
+    name: m.module.length > 14 ? m.module.substring(0, 14) + "…" : m.module,
+    "Abs NJ":    parseFloat(m.taux_nj.toFixed(1)),
+    "Abs Total": parseFloat(m.taux_total.toFixed(1)),
+  }));
+  return (
+    <div style={{ backgroundColor: "#FFFFFF", border: "1px solid #E2E8F0", borderRadius: 8, padding: "20px 20px 12px", boxShadow: "0 1px 3px rgba(0,0,0,0.06)", marginBottom: 16 }}>
+      <div style={{ fontSize: 13, fontWeight: 700, color: "#1a3a6b", marginBottom: 12 }}>Taux d'absence par module</div>
+      <ResponsiveContainer width="100%" height={230}>
+        <BarChart data={data} margin={{ top: 5, right: 20, left: 0, bottom: 45 }}>
+          <CartesianGrid strokeDasharray="3 3" stroke="#E2E8F0" />
+          <XAxis dataKey="name" tick={{ fill: "#64748b", fontSize: 10 }} angle={-30} textAnchor="end" interval={0} />
+          <YAxis tick={{ fill: "#64748b", fontSize: 10 }} domain={[0, 100]} unit="%" />
+          <Tooltip formatter={(v) => `${v}%`} contentStyle={{ fontSize: 12, borderRadius: 6, border: "1px solid #E2E8F0" }} />
+          <Legend wrapperStyle={{ fontSize: 11, paddingTop: 4 }} />
+          <ReferenceLine y={20} stroke="#F59E0B" strokeDasharray="4 4" label={{ value: "20%", fill: "#d97706", fontSize: 10, position: "right" }} />
+          <ReferenceLine y={50} stroke="#EF4444" strokeDasharray="4 4" label={{ value: "50%", fill: "#dc2626", fontSize: 10, position: "right" }} />
+          <Bar dataKey="Abs NJ"    fill="#F59E0B" radius={[3, 3, 0, 0]} maxBarSize={24} />
+          <Bar dataKey="Abs Total" fill="#EF4444" radius={[3, 3, 0, 0]} maxBarSize={24} />
+        </BarChart>
+      </ResponsiveContainer>
     </div>
   );
 }
@@ -66,13 +123,18 @@ export default function PageDetailEtudiant({ id_etudiant, onBack }) {
         )}
       </div>
 
-      {/* KPIs */}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 12, marginBottom: 24 }}>
-        <KpiCard label="Abs. NJ"        value={p.total_abs_nj}       color="#d97706" icon="⚠" />
-        <KpiCard label="Abs. just."     value={p.total_abs_just}     color="#8DC63F" icon="✓" />
-        <KpiCard label="Score risque"   value={`${p.score_global}/100`} color={scoreColor} icon="◎" />
-        <KpiCard label="Moyenne"        value={p.moyenne_generale ? Number(p.moyenne_generale).toFixed(2) : "—"} color="#1a3a6b" icon="◐" />
-        <KpiCard label="Total absences" value={p.total_absences}     color="#64748b" icon="≡" />
+      {/* KPIs + Radar */}
+      <div style={{ display: "flex", gap: 16, marginBottom: 24, alignItems: "stretch" }}>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 12, flex: 1 }}>
+          <KpiCard label="Abs. NJ"        value={p.total_abs_nj}       color="#d97706" icon="⚠" />
+          <KpiCard label="Abs. just."     value={p.total_abs_just}     color="#8DC63F" icon="✓" />
+          <KpiCard label="Score risque"   value={`${p.score_global}/100`} color={scoreColor} icon="◎" />
+          <KpiCard label="Moyenne"        value={p.moyenne_generale ? Number(p.moyenne_generale).toFixed(2) : "—"} color="#1a3a6b" icon="◐" />
+          <KpiCard label="Total absences" value={p.total_absences}     color="#64748b" icon="≡" />
+        </div>
+        <div style={{ width: 280, flexShrink: 0 }}>
+          <RiskRadar profil={p} />
+        </div>
       </div>
 
       {/* Tabs */}
@@ -91,29 +153,32 @@ export default function PageDetailEtudiant({ id_etudiant, onBack }) {
 
       {/* Tab Modules */}
       {tab === "modules" && (
-        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-          {(p.modules ?? []).map(m => (
-            <div key={m.module} style={{ backgroundColor: "#FFFFFF", border: "1px solid #E2E8F0", borderRadius: 8, padding: "20px 24px", boxShadow: "0 1px 3px rgba(0,0,0,0.06)" }}>
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>
-                <span style={{ fontSize: 14, fontWeight: 600, color: "#1e293b" }}>{m.module}</span>
-                <StatutBadge statut={m.statut_exam} />
-              </div>
-              <div style={{ marginBottom: 20 }}>
-                <ModuleBar taux_nj={m.taux_nj} taux_total={m.taux_total} />
-              </div>
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12, fontSize: 12 }}>
-                <div><span style={{ color: "#64748b" }}>NJ : </span><strong style={{ color: "#d97706" }}>{m.nb_abs_nj}/{m.total_seances} ({m.taux_nj.toFixed(1)}%)</strong></div>
-                <div><span style={{ color: "#64748b" }}>Total : </span><strong style={{ color: "#dc2626" }}>{m.taux_total.toFixed(1)}%</strong></div>
-                <div><span style={{ color: "#64748b" }}>Seuil alerte : </span><strong style={{ color: "#d97706" }}>{m.seuil_alerte}%</strong></div>
-                <div><span style={{ color: "#64748b" }}>Seuil exclu : </span><strong style={{ color: "#dc2626" }}>{m.seuil_exclusion}%</strong></div>
-              </div>
-              {m.alerte_module && (
-                <div style={{ marginTop: 12, padding: "8px 12px", borderRadius: 4, backgroundColor: "rgba(245,158,11,0.08)", border: "1px solid rgba(245,158,11,0.25)", fontSize: 12, color: "#d97706" }}>
-                  {m.alerte_module}
+        <div>
+          {(p.modules ?? []).length > 0 && <ModulesBarChart modules={p.modules} />}
+          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+            {(p.modules ?? []).map(m => (
+              <div key={m.module} style={{ backgroundColor: "#FFFFFF", border: "1px solid #E2E8F0", borderRadius: 8, padding: "20px 24px", boxShadow: "0 1px 3px rgba(0,0,0,0.06)" }}>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>
+                  <span style={{ fontSize: 14, fontWeight: 600, color: "#1e293b" }}>{m.module}</span>
+                  <StatutBadge statut={m.statut_exam} />
                 </div>
-              )}
-            </div>
-          ))}
+                <div style={{ marginBottom: 20 }}>
+                  <ModuleBar taux_nj={m.taux_nj} taux_total={m.taux_total} />
+                </div>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12, fontSize: 12 }}>
+                  <div><span style={{ color: "#64748b" }}>NJ : </span><strong style={{ color: "#d97706" }}>{m.nb_abs_nj}/{m.total_seances} ({m.taux_nj.toFixed(1)}%)</strong></div>
+                  <div><span style={{ color: "#64748b" }}>Total : </span><strong style={{ color: "#dc2626" }}>{m.taux_total.toFixed(1)}%</strong></div>
+                  <div><span style={{ color: "#64748b" }}>Seuil alerte : </span><strong style={{ color: "#d97706" }}>{m.seuil_alerte}%</strong></div>
+                  <div><span style={{ color: "#64748b" }}>Seuil exclu : </span><strong style={{ color: "#dc2626" }}>{m.seuil_exclusion}%</strong></div>
+                </div>
+                {m.alerte_module && (
+                  <div style={{ marginTop: 12, padding: "8px 12px", borderRadius: 4, backgroundColor: "rgba(245,158,11,0.08)", border: "1px solid rgba(245,158,11,0.25)", fontSize: 12, color: "#d97706" }}>
+                    {m.alerte_module}
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
         </div>
       )}
 

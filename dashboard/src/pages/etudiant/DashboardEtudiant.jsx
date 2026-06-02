@@ -3,15 +3,43 @@ import { getEtudiants, getEtudiant } from "../../api.js";
 import KpiCard from "../../components/KpiCard.jsx";
 import ModuleBar from "../../components/ModuleBar.jsx";
 import StatutBadge from "../../components/StatutBadge.jsx";
+import {
+  RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis,
+  Radar, ResponsiveContainer, Tooltip,
+} from "recharts";
 
 const S = {
-  page:    { minHeight: "100vh", backgroundColor: "#FFFFFF", padding: "40px 32px", maxWidth: 900, margin: "0 auto" },
-  card:    { backgroundColor: "#FFFFFF", border: "1px solid #E2E8F0", borderRadius: 8, padding: "20px 24px", marginBottom: 12, boxShadow: "0 1px 3px rgba(0,0,0,0.06)" },
-  label:   { fontSize: 11, fontWeight: 600, letterSpacing: "0.07em", textTransform: "uppercase", color: "#64748b" },
-  section: { fontSize: 12, fontWeight: 600, letterSpacing: "0.08em", textTransform: "uppercase", color: "#64748b", marginBottom: 16 },
-  th:      { padding: "10px 16px", fontSize: 11, fontWeight: 600, letterSpacing: "0.07em", textTransform: "uppercase", color: "#64748b", textAlign: "left", borderBottom: "1px solid #E2E8F0", backgroundColor: "#F8FAFC" },
-  td:      { padding: "11px 16px", fontSize: 13, borderBottom: "1px solid #E2E8F0", color: "#1e293b" },
+  page:  { minHeight: "100vh", backgroundColor: "#FFFFFF", padding: "40px 32px", maxWidth: 960, margin: "0 auto" },
+  card:  { backgroundColor: "#FFFFFF", border: "1px solid #E2E8F0", borderRadius: 8, padding: "20px 24px", marginBottom: 12, boxShadow: "0 1px 3px rgba(0,0,0,0.06)" },
+  th:    { padding: "10px 16px", fontSize: 11, fontWeight: 600, letterSpacing: "0.07em", textTransform: "uppercase", color: "#64748b", textAlign: "left", borderBottom: "1px solid #E2E8F0", backgroundColor: "#F8FAFC" },
+  td:    { padding: "11px 16px", fontSize: 13, borderBottom: "1px solid #E2E8F0", color: "#1e293b" },
 };
+
+function RiskRadar({ profil }) {
+  const mods     = profil.modules || [];
+  const avgNj    = mods.length > 0 ? mods.reduce((s, m) => s + m.taux_nj, 0) / mods.length : 0;
+  const avgTotal = mods.length > 0 ? mods.reduce((s, m) => s + m.taux_total, 0) / mods.length : 0;
+  const data = [
+    { subject: "Abs NJ",      value: Math.round(avgNj) },
+    { subject: "Abs Total",   value: Math.round(avgTotal) },
+    { subject: "Risque Notes", value: Math.round(profil.score_notes || 0) },
+  ];
+  const color = profil.score_global >= 70 ? "#EF4444" : profil.score_global >= 40 ? "#F59E0B" : "#8DC63F";
+  return (
+    <div style={{ backgroundColor: "#FFFFFF", border: "1px solid #E2E8F0", borderRadius: 8, padding: "16px 16px 8px", boxShadow: "0 1px 3px rgba(0,0,0,0.06)", height: "100%" }}>
+      <div style={{ fontSize: 12, fontWeight: 700, color: "#1a3a6b", marginBottom: 4 }}>Profil de risque</div>
+      <ResponsiveContainer width="100%" height={200}>
+        <RadarChart data={data} margin={{ top: 10, right: 20, bottom: 10, left: 20 }}>
+          <PolarGrid stroke="#E2E8F0" />
+          <PolarAngleAxis dataKey="subject" tick={{ fill: "#64748b", fontSize: 11 }} />
+          <PolarRadiusAxis angle={90} domain={[0, 100]} tick={{ fill: "#94a3b8", fontSize: 9 }} tickCount={4} />
+          <Radar dataKey="value" stroke={color} fill={color} fillOpacity={0.25} strokeWidth={2} />
+          <Tooltip formatter={(v) => `${v}%`} contentStyle={{ fontSize: 12, borderRadius: 6, border: "1px solid #E2E8F0" }} />
+        </RadarChart>
+      </ResponsiveContainer>
+    </div>
+  );
+}
 
 function Spinner() {
   return (
@@ -53,7 +81,7 @@ export default function DashboardEtudiant({ email, onLogout }) {
   if (error) return (
     <div style={{ minHeight: "100vh", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 16, backgroundColor: "#FFFFFF" }}>
       <p style={{ fontSize: 13, color: "#dc2626", textAlign: "center", maxWidth: 400 }}>{error}</p>
-      <button onClick={onLogout} style={{ fontSize: 12, padding: "8px 16px", borderRadius: 6, backgroundColor: "#FFFFFF", color: "#64748b", border: "1px solid #E2E8F0", cursor: "pointer" }}>Retour</button>
+      <button onClick={onLogout} style={{ fontSize: 12, padding: "8px 16px", borderRadius: 6, backgroundColor: "#F8FAFC", color: "#64748b", border: "1px solid #E2E8F0", cursor: "pointer" }}>Retour</button>
     </div>
   );
 
@@ -77,12 +105,17 @@ export default function DashboardEtudiant({ email, onLogout }) {
         </button>
       </div>
 
-      {/* KPIs */}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12, marginBottom: 24 }}>
-        <KpiCard label="Absences NJ"     value={profil.total_abs_nj}      color="#d97706" icon="⚠" />
-        <KpiCard label="Abs. justifiées" value={profil.total_abs_just}    color="#8DC63F" icon="✓" />
-        <KpiCard label="Score risque"    value={`${profil.score_global}/100`} color={profil.score_global >= 70 ? "#dc2626" : profil.score_global >= 40 ? "#d97706" : "#5a9e14"} icon="◎" />
-        <KpiCard label="Moyenne"         value={profil.moyenne_generale ? profil.moyenne_generale.toFixed(2) : "—"} color="#1a3a6b" icon="◐" />
+      {/* KPIs + Radar */}
+      <div style={{ display: "flex", gap: 16, marginBottom: 24, alignItems: "stretch" }}>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: 12, flex: 1 }}>
+          <KpiCard label="Absences NJ"     value={profil.total_abs_nj}      color="#d97706" icon="⚠" />
+          <KpiCard label="Abs. justifiées" value={profil.total_abs_just}    color="#8DC63F" icon="✓" />
+          <KpiCard label="Score risque"    value={`${profil.score_global}/100`} color={profil.score_global >= 70 ? "#dc2626" : profil.score_global >= 40 ? "#d97706" : "#5a9e14"} icon="◎" />
+          <KpiCard label="Moyenne"         value={profil.moyenne_generale ? profil.moyenne_generale.toFixed(2) : "—"} color="#1a3a6b" icon="◐" />
+        </div>
+        <div style={{ width: 280, flexShrink: 0 }}>
+          <RiskRadar profil={profil} />
+        </div>
       </div>
 
       {/* Tabs */}
@@ -129,9 +162,7 @@ export default function DashboardEtudiant({ email, onLogout }) {
       {tab === "historique" && (
         <div style={{ ...S.card, padding: 0, overflow: "hidden" }}>
           <table style={{ width: "100%", borderCollapse: "collapse" }}>
-            <thead>
-              <tr>{["Date", "Module", "Durée", "Justifiée", "Motif"].map(h => <th key={h} style={S.th}>{h}</th>)}</tr>
-            </thead>
+            <thead><tr>{["Date", "Module", "Durée", "Justifiée", "Motif"].map(h => <th key={h} style={S.th}>{h}</th>)}</tr></thead>
             <tbody>
               {absences.length === 0
                 ? <tr><td colSpan={5} style={{ ...S.td, textAlign: "center", color: "#64748b" }}>Aucune absence</td></tr>
@@ -154,9 +185,7 @@ export default function DashboardEtudiant({ email, onLogout }) {
       {tab === "notes" && (
         <div style={{ ...S.card, padding: 0, overflow: "hidden" }}>
           <table style={{ width: "100%", borderCollapse: "collapse" }}>
-            <thead>
-              <tr>{["Module", "CC", "Examen", "Finale", "Mention", "Statut"].map(h => <th key={h} style={S.th}>{h}</th>)}</tr>
-            </thead>
+            <thead><tr>{["Module", "CC", "Examen", "Finale", "Mention", "Statut"].map(h => <th key={h} style={S.th}>{h}</th>)}</tr></thead>
             <tbody>
               {notes.length === 0
                 ? <tr><td colSpan={6} style={{ ...S.td, textAlign: "center", color: "#64748b" }}>Aucune note</td></tr>
