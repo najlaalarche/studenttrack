@@ -1,12 +1,15 @@
 import dataclasses
 from pathlib import Path
+import os
 
 import numpy as np
 import pandas as pd
-from flask import Flask, jsonify
+from flask import Flask, jsonify, request
 from flask_cors import CORS
+from dotenv import load_dotenv
 
 ROOT = Path(__file__).resolve().parents[2]
+load_dotenv()
 
 import sys
 sys.path.insert(0, str(ROOT))
@@ -14,9 +17,11 @@ sys.path.insert(0, str(ROOT))
 from backend.ingestion.reader import load_dataset, detect_delta
 from backend.analysis.engine import calculer_profils, filtrer_alertes
 from backend.agent.ia_agent import traiter_alertes
+from backend.agent.email_agent import init_alerts_db, process_student_alerts, get_alert_history
 
 app = Flask(__name__)
 CORS(app)
+init_alerts_db()
 
 DATASET_PATH = ROOT / "data" / "dataset.xlsx"
 
@@ -134,6 +139,57 @@ def alertes():
         {"profil": _serialize(r["profil"]), "decision": _serialize(r["decision"])}
         for r in resultats
     ])
+
+
+@app.route("/api/alerts/send", methods=["POST"])
+def send_alert():
+    payload = request.get_json(silent=True) or {}
+    student_id = payload.get("student_id")
+    if not student_id:
+        return jsonify({"erreur": "student_id requis"}), 400
+
+    _, _, _, _, profils = _get_data()
+    if not profils:
+        return jsonify({"erreur": "dataset.xlsx introuvable"}), 404
+
+    profil = next((p for p in profils if p.id_etudiant == str(student_id)), None)
+    if not profil:
+        return jsonify({"erreur": "Étudiant non trouvé"}), 404
+
+    contacts = {
+        "chef_email": payload.get("chef_email"),
+        "direction_email": payload.get("direction_email"),
+    }
+    results = process_student_alerts(_serialize(profil), contacts)
+    total_sent = sum(1 for r in results if r.get("sent"))
+    return jsonify({"results": results, "total_sent": total_sent})
+
+
+@app.route("/api/alerts/send-all", methods=["POST"])
+def send_all_alerts():
+    _, _, _, _, profils = _get_data()
+    if not profils:
+        return jsonify({"erreur": "dataset.xlsx introuvable"}), 404
+
+    en_alerte = filtrer_alertes(profils)
+    all_results = []
+    for profil in en_alerte:
+        results = process_student_alerts(_serialize(profil), {
+            "chef_email": os.environ.get("CHEF_EMAIL"),
+            "direction_email": os.environ.get("DIRECTION_EMAIL"),
+        })
+        all_results.extend(results)
+
+    total_sent = sum(1 for r in all_results if r.get("sent"))
+    failed = sum(1 for r in all_results if not r.get("sent"))
+    return jsonify({"processed": len(en_alerte), "sent": total_sent, "failed": failed, "results": all_results})
+
+
+@app.route("/api/alerts/history")
+def alerts_history():
+    student_id = request.args.get("student_id")
+    alerts = get_alert_history(student_id)
+    return jsonify({"alerts": alerts})
 
 
 @app.route("/api/modules")
