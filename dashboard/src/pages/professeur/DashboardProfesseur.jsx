@@ -11,7 +11,7 @@ const S = {
 
 function Spinner() {
   return (
-    <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", backgroundColor: "#F0F4F8" }}>
+    <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", backgroundColor: "#FFFFFF" }}>
       <div style={{ width: 28, height: 28, border: "2px solid #E2E8F0", borderTop: "2px solid #1a3a6b", borderRadius: "50%", animation: "spin 0.8s linear infinite" }} />
       <style>{`@keyframes spin { to { transform: rotate(360deg); }}`}</style>
     </div>
@@ -50,7 +50,7 @@ export default function DashboardProfesseur({ module: moduleProp, onLogout }) {
   if (loading) return <Spinner />;
 
   return (
-    <div style={{ minHeight: "100vh", backgroundColor: "#F0F4F8", padding: "40px 32px", maxWidth: 1000, margin: "0 auto" }}>
+    <div style={{ minHeight: "100vh", backgroundColor: "#FFFFFF", padding: "40px 32px", maxWidth: 1000, margin: "0 auto" }}>
       {/* Header */}
       <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 32 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 14 }}>

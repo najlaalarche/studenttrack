@@ -325,7 +325,7 @@ export default function Login({ onLogin }) {
             color: "#94a3b8",
           }}
         >
-          Club Cybotics — ESITH Casablanca
+          ESITH Casablanca
         </div>
       </div>
     </div>

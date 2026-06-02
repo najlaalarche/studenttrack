@@ -51,7 +51,7 @@ export default function Sidebar({ active, onNav, onLogout, userName }) {
                 border: "none", cursor: "pointer", textAlign: "left", width: "100%",
                 borderLeft: isActive ? "3px solid #1a3a6b" : "3px solid transparent",
               }}
-              onMouseEnter={e => { if (!isActive) e.currentTarget.style.backgroundColor = "#F0F4F8"; }}
+              onMouseEnter={e => { if (!isActive) e.currentTarget.style.backgroundColor = "#f1f5f9"; }}
               onMouseLeave={e => { if (!isActive) e.currentTarget.style.backgroundColor = "transparent"; }}
             >
               <span style={{ fontSize: 14, opacity: isActive ? 1 : 0.6 }}>{item.icon}</span>

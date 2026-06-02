@@ -95,7 +95,7 @@ export default function DashboardAdmin({ onLogout }) {
   function handleNav(key) { setPage(key); setSelected(null); }
 
   return (
-    <div style={{ minHeight: "100vh", backgroundColor: "#F0F4F8" }}>
+    <div style={{ minHeight: "100vh", backgroundColor: "#FFFFFF" }}>
       <Sidebar
         active={selected ? "etudiants" : page}
         onNav={handleNav}

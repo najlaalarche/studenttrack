@@ -5,7 +5,7 @@ import ModuleBar from "../../components/ModuleBar.jsx";
 import StatutBadge from "../../components/StatutBadge.jsx";
 
 const S = {
-  page:    { minHeight: "100vh", backgroundColor: "#F0F4F8", padding: "40px 32px", maxWidth: 900, margin: "0 auto" },
+  page:    { minHeight: "100vh", backgroundColor: "#FFFFFF", padding: "40px 32px", maxWidth: 900, margin: "0 auto" },
   card:    { backgroundColor: "#FFFFFF", border: "1px solid #E2E8F0", borderRadius: 8, padding: "20px 24px", marginBottom: 12, boxShadow: "0 1px 3px rgba(0,0,0,0.06)" },
   label:   { fontSize: 11, fontWeight: 600, letterSpacing: "0.07em", textTransform: "uppercase", color: "#64748b" },
   section: { fontSize: 12, fontWeight: 600, letterSpacing: "0.08em", textTransform: "uppercase", color: "#64748b", marginBottom: 16 },
@@ -15,7 +15,7 @@ const S = {
 
 function Spinner() {
   return (
-    <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", backgroundColor: "#F0F4F8" }}>
+    <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", backgroundColor: "#FFFFFF" }}>
       <div style={{ width: 28, height: 28, border: "2px solid #E2E8F0", borderTop: "2px solid #1a3a6b", borderRadius: "50%", animation: "spin 0.8s linear infinite" }} />
       <style>{`@keyframes spin { to { transform: rotate(360deg); }}`}</style>
     </div>
@@ -51,7 +51,7 @@ export default function DashboardEtudiant({ email, onLogout }) {
   if (loading) return <Spinner />;
 
   if (error) return (
-    <div style={{ minHeight: "100vh", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 16, backgroundColor: "#F0F4F8" }}>
+    <div style={{ minHeight: "100vh", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 16, backgroundColor: "#FFFFFF" }}>
       <p style={{ fontSize: 13, color: "#dc2626", textAlign: "center", maxWidth: 400 }}>{error}</p>
       <button onClick={onLogout} style={{ fontSize: 12, padding: "8px 16px", borderRadius: 6, backgroundColor: "#FFFFFF", color: "#64748b", border: "1px solid #E2E8F0", cursor: "pointer" }}>Retour</button>
     </div>
