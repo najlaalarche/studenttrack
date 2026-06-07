@@ -1,4 +1,6 @@
 import dataclasses
+import hashlib
+import json
 from pathlib import Path
 import os
 
@@ -10,6 +12,23 @@ from dotenv import load_dotenv
 
 ROOT = Path(__file__).resolve().parents[2]
 load_dotenv()
+
+PASSWORDS_FILE = ROOT / "backend" / "data" / "passwords.json"
+
+
+def _load_passwords() -> dict:
+    if not PASSWORDS_FILE.exists():
+        return {}
+    return json.loads(PASSWORDS_FILE.read_text(encoding="utf-8"))
+
+
+def _save_passwords(data: dict):
+    PASSWORDS_FILE.parent.mkdir(parents=True, exist_ok=True)
+    PASSWORDS_FILE.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
+
+
+def _hash_password(password: str) -> str:
+    return hashlib.sha256(password.encode("utf-8")).hexdigest()
 
 import sys
 sys.path.insert(0, str(ROOT))
@@ -208,6 +227,122 @@ def filieres():
         return jsonify({"erreur": "dataset.xlsx introuvable"}), 404
     fils = sorted(df_abs["filiere"].dropna().unique().tolist())
     return jsonify(fils)
+
+
+@app.route("/api/auth/check-email", methods=["POST"])
+def auth_check_email():
+    payload = request.get_json(silent=True) or {}
+    email = (payload.get("email") or "").strip().lower().replace("@esith.ma", "@esith.net")
+    if not email:
+        return jsonify({"error": "email requis"}), 400
+
+    _, _, df_etudiants, _, _ = _get_data()
+    if df_etudiants is None:
+        return jsonify({"error": "dataset introuvable"}), 404
+
+    emails_dataset = (
+        df_etudiants["Email_Etudiant"]
+        .fillna("")
+        .str.strip()
+        .str.lower()
+        .str.replace("@esith.ma", "@esith.net", regex=False)
+        .tolist()
+    )
+    exists = email in emails_dataset
+
+    passwords = _load_passwords()
+    has_password = email in passwords
+
+    prenom = ""
+    if exists:
+        mask = (
+            df_etudiants["Email_Etudiant"]
+            .fillna("")
+            .str.strip()
+            .str.lower()
+            .str.replace("@esith.ma", "@esith.net", regex=False)
+        ) == email
+        row = df_etudiants[mask]
+        if not row.empty:
+            prenom = str(row.iloc[0].get("Prenom", ""))
+
+    return jsonify({"exists": exists, "has_password": has_password, "prenom": prenom})
+
+
+@app.route("/api/auth/register", methods=["POST"])
+def auth_register():
+    payload = request.get_json(silent=True) or {}
+    email = (payload.get("email") or "").strip().lower().replace("@esith.ma", "@esith.net")
+    password = payload.get("password") or ""
+
+    if not email or not password:
+        return jsonify({"success": False, "error": "email et mot de passe requis"}), 400
+    if len(password) < 8:
+        return jsonify({"success": False, "error": "Le mot de passe doit contenir au moins 8 caractères"}), 400
+
+    _, _, df_etudiants, _, _ = _get_data()
+    if df_etudiants is None:
+        return jsonify({"success": False, "error": "dataset introuvable"}), 404
+
+    emails_dataset = (
+        df_etudiants["Email_Etudiant"]
+        .fillna("")
+        .str.strip()
+        .str.lower()
+        .str.replace("@esith.ma", "@esith.net", regex=False)
+        .tolist()
+    )
+    if email not in emails_dataset:
+        return jsonify({"success": False, "error": "Email non reconnu"}), 400
+
+    passwords = _load_passwords()
+    if email in passwords:
+        return jsonify({"success": False, "error": "Un mot de passe existe déjà"}), 400
+
+    passwords[email] = _hash_password(password)
+    _save_passwords(passwords)
+    return jsonify({"success": True})
+
+
+@app.route("/api/auth/login", methods=["POST"])
+def auth_login():
+    payload = request.get_json(silent=True) or {}
+    email = (payload.get("email") or "").strip().lower().replace("@esith.ma", "@esith.net")
+    password = payload.get("password") or ""
+
+    if not email or not password:
+        return jsonify({"success": False, "error": "email et mot de passe requis"}), 400
+
+    passwords = _load_passwords()
+    if email not in passwords:
+        return jsonify({"success": False, "error": "Aucun compte trouvé pour cet email"}), 401
+    if passwords[email] != _hash_password(password):
+        return jsonify({"success": False, "error": "Mot de passe incorrect"}), 401
+
+    _, _, df_etudiants, _, profils = _get_data()
+    etudiant_info = {}
+    if df_etudiants is not None:
+        mask = (
+            df_etudiants["Email_Etudiant"]
+            .fillna("")
+            .str.strip()
+            .str.lower()
+            .str.replace("@esith.ma", "@esith.net", regex=False)
+        ) == email
+        row = df_etudiants[mask]
+        if not row.empty:
+            r = row.iloc[0]
+            id_etudiant = str(r.get("id_etudiant", ""))
+            etudiant_info = {
+                "id_etudiant": id_etudiant,
+                "nom":    str(r.get("Nom", "")),
+                "prenom": str(r.get("Prenom", "")),
+                "email":  email,
+                "filiere": str(r.get("Filiere", "")),
+                "annee":   str(r.get("Annee", "")),
+            }
+
+    return jsonify({"success": True, "etudiant": etudiant_info})
 
 
 @app.route("/api/sync", methods=["POST"])
