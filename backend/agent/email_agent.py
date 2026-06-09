@@ -1,4 +1,5 @@
 import os
+import re
 import sqlite3
 from datetime import datetime
 from pathlib import Path
@@ -19,6 +20,7 @@ DB_PATH = LOGS_DIR / "alerts.db"
 
 CHEF_EMAIL = os.environ.get("CHEF_EMAIL", "chef.filiere@esith.ma")
 DIRECTION_EMAIL = os.environ.get("DIRECTION_EMAIL", "direction@esith.ma")
+EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
 
 def init_alerts_db():
@@ -161,13 +163,27 @@ def _select_template(destinataire: str, seuil: int):
     raise ValueError(f"Template inconnu pour destinataire={destinataire} seuil={seuil}")
 
 
+def _is_valid_email(email: str | None) -> bool:
+    return bool(email and EMAIL_RE.match(str(email).strip()))
+
+
 def _send_single_alert(student, module_name, seuil, destinataire, to_email, taux) -> dict:
     template_fn = _select_template(destinataire, seuil)
     subject, html = template_fn(_build_template_data(student, module_name, taux, seuil))
     student_id = student.get("id_etudiant", "")
+    to_email = str(to_email or "").strip()
+
+    if not _is_valid_email(to_email):
+        log_alert(student_id, module_name, seuil, destinataire, to_email, subject, "failed", "email invalide")
+        return {
+            "destinataire": destinataire,
+            "seuil": seuil,
+            "module": module_name,
+            "sent": False,
+            "reason": "email invalide",
+        }
 
     if has_alert_been_sent(student_id, module_name, seuil, destinataire):
-        log_alert(student_id, module_name, seuil, destinataire, to_email, subject, "failed", "doublon")
         return {
             "destinataire": destinataire,
             "seuil": seuil,
@@ -188,7 +204,7 @@ def _send_single_alert(student, module_name, seuil, destinataire, to_email, taux
     }
 
 
-def process_student_alerts(etudiant: dict, contacts: dict | None = None) -> list[dict]:
+def process_student_alerts(etudiant: dict, contacts: dict | None = None, notify_staff: bool = True) -> list[dict]:
     """Analyse un profil étudiant et envoie les emails nécessaires."""
     student = _normalize_student(etudiant)
     contacts = contacts or {}
@@ -209,12 +225,14 @@ def process_student_alerts(etudiant: dict, contacts: dict | None = None) -> list
 
         if taux_nj >= 30:
             results.append(_send_single_alert(student, module_name, 30, "etudiant", student_email, taux_nj))
-            results.append(_send_single_alert(student, module_name, 30, "chef_filiere", chef_email, taux_nj))
+            if notify_staff:
+                results.append(_send_single_alert(student, module_name, 30, "chef_filiere", chef_email, taux_nj))
 
         if taux_total >= 50:
             results.append(_send_single_alert(student, module_name, 50, "etudiant", student_email, taux_total))
-            results.append(_send_single_alert(student, module_name, 50, "chef_filiere", chef_email, taux_total))
-            results.append(_send_single_alert(student, module_name, 50, "direction", direction_email, taux_total))
+            if notify_staff:
+                results.append(_send_single_alert(student, module_name, 50, "chef_filiere", chef_email, taux_total))
+                results.append(_send_single_alert(student, module_name, 50, "direction", direction_email, taux_total))
 
     return results
 
