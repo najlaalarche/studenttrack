@@ -9,6 +9,12 @@ const S = {
   td: { padding: "12px 16px", fontSize: 13, borderBottom: "1px solid #E2E8F0", color: "#1e293b" },
 };
 
+const selectStyle = {
+  padding: "7px 12px", borderRadius: 6, fontSize: 12,
+  backgroundColor: "#FFFFFF", border: "1px solid #E2E8F0",
+  color: "#1e293b", outline: "none", cursor: "pointer", minWidth: 160,
+};
+
 function Spinner() {
   return (
     <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", backgroundColor: "#FFFFFF" }}>
@@ -18,12 +24,26 @@ function Spinner() {
   );
 }
 
-export default function DashboardProfesseur({ module: moduleProp, onLogout }) {
+function FilterBtn({ active, onClick, children }) {
+  return (
+    <button onClick={onClick} style={{
+      padding: "5px 12px", borderRadius: 6, fontSize: 12, fontWeight: 500, cursor: "pointer",
+      backgroundColor: active ? "#1a3a6b" : "#FFFFFF",
+      color: active ? "#fff" : "#64748b",
+      border: `1px solid ${active ? "#1a3a6b" : "#E2E8F0"}`,
+    }}>{children}</button>
+  );
+}
+
+export default function DashboardProfesseur({ module: moduleProp, filiere: filiereProp, onLogout }) {
   const [rows, setRows]       = useState([]);
-  const [filtre, setFiltre]   = useState("Tous");
-  const [search, setSearch]   = useState("");
   const [error, setError]     = useState(null);
   const [loading, setLoading] = useState(true);
+
+  const [filtreFiliere, setFiltreFiliere] = useState(filiereProp || "Tous");
+  const [filtreAnnee, setFiltreAnnee]     = useState("Tous");
+  const [filtreStatut, setFiltreStatut]   = useState("Tous");
+  const [search, setSearch]               = useState("");
 
   useEffect(() => {
     async function load() {
@@ -44,17 +64,34 @@ export default function DashboardProfesseur({ module: moduleProp, onLogout }) {
     load();
   }, [moduleProp]);
 
+  // Derive available filières and promotions from students in this module
+  const filieres   = [...new Set(rows.map(r => r.etudiant.filiere).filter(Boolean))].sort();
+  const promotions = [...new Set(rows.map(r => r.etudiant.annee).filter(Boolean))].sort();
+
   const displayed = rows.filter(r => {
-    if (filtre !== "Tous" && r.modInfo.statut_exam !== filtre) return false;
+    const e = r.etudiant;
+    if (filtreFiliere !== "Tous" && e.filiere !== filtreFiliere) return false;
+    if (filtreAnnee !== "Tous" && e.annee !== filtreAnnee) return false;
+    if (filtreStatut !== "Tous" && r.modInfo.statut_exam !== filtreStatut) return false;
     if (search) {
       const q = search.toLowerCase();
-      const e = r.etudiant;
       if (!(e.nom.toLowerCase().includes(q) || e.prenom.toLowerCase().includes(q) || e.email.toLowerCase().includes(q))) return false;
     }
     return true;
   });
+
+  // Stats based on current filter selection
   const counts = { AUTORISE: 0, AVERTI: 0, EXCLU: 0 };
-  rows.forEach(r => { counts[r.modInfo.statut_exam] = (counts[r.modInfo.statut_exam] ?? 0) + 1; });
+  displayed.forEach(r => { counts[r.modInfo.statut_exam] = (counts[r.modInfo.statut_exam] ?? 0) + 1; });
+
+  const hasActiveFilters = filtreFiliere !== "Tous" || filtreAnnee !== "Tous" || filtreStatut !== "Tous" || search !== "";
+
+  function resetFilters() {
+    setFiltreFiliere("Tous");
+    setFiltreAnnee("Tous");
+    setFiltreStatut("Tous");
+    setSearch("");
+  }
 
   if (loading) return <Spinner />;
 
@@ -67,7 +104,10 @@ export default function DashboardProfesseur({ module: moduleProp, onLogout }) {
           <div>
             <div style={{ fontSize: 11, fontWeight: 600, letterSpacing: "0.1em", textTransform: "uppercase", color: "#8DC63F", marginBottom: 2 }}>Module</div>
             <h1 style={{ fontSize: 20, fontWeight: 700, color: "#1a3a6b", margin: 0 }}>{moduleProp}</h1>
-            <p style={{ fontSize: 13, color: "#64748b", margin: "2px 0 0" }}>{rows.length} étudiant(s)</p>
+            <p style={{ fontSize: 13, color: "#64748b", margin: "2px 0 0" }}>
+              {rows.length} étudiant(s) dans ce module
+              {filtreFiliere !== "Tous" && <span style={{ marginLeft: 6, color: "#1a3a6b", fontWeight: 600 }}>· {filtreFiliere}</span>}
+            </p>
           </div>
         </div>
         <button onClick={onLogout} style={{ fontSize: 12, padding: "7px 14px", borderRadius: 6, backgroundColor: "#FFFFFF", color: "#64748b", border: "1px solid #E2E8F0", cursor: "pointer" }}>
@@ -77,7 +117,7 @@ export default function DashboardProfesseur({ module: moduleProp, onLogout }) {
 
       {error && <p style={{ color: "#dc2626", fontSize: 13, marginBottom: 20 }}>{error}</p>}
 
-      {/* Résumé */}
+      {/* Résumé (basé sur la sélection courante) */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 12, marginBottom: 24 }}>
         {[
           { label: "Autorisés", count: counts.AUTORISE, color: "#8DC63F", border: "#8DC63F" },
@@ -92,26 +132,40 @@ export default function DashboardProfesseur({ module: moduleProp, onLogout }) {
       </div>
 
       {/* Filtres */}
-      <div style={{ backgroundColor: "#F8FAFC", border: "1px solid #E2E8F0", borderRadius: 8, padding: "12px 16px", marginBottom: 16 }}>
-        <div style={{ display: "flex", flexWrap: "wrap", gap: 10, marginBottom: 10 }}>
+      <div style={{ backgroundColor: "#F8FAFC", border: "1px solid #E2E8F0", borderRadius: 8, padding: "16px 20px", marginBottom: 16 }}>
+        {/* Ligne 1 : recherche + dropdowns filière / promotion */}
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 10, marginBottom: 12 }}>
           <input
             placeholder="Rechercher par nom ou email…"
             value={search}
             onChange={e => setSearch(e.target.value)}
-            style={{ padding: "7px 12px", borderRadius: 6, fontSize: 12, backgroundColor: "#FFFFFF", border: "1px solid #E2E8F0", color: "#1e293b", outline: "none", minWidth: 220 }}
+            style={{ ...selectStyle, minWidth: 220 }}
           />
+          <select value={filtreFiliere} onChange={e => setFiltreFiliere(e.target.value)} style={selectStyle}>
+            <option value="Tous">Toutes les filières</option>
+            {filieres.map(f => <option key={f} value={f}>{f}</option>)}
+          </select>
+          <select value={filtreAnnee} onChange={e => setFiltreAnnee(e.target.value)} style={selectStyle}>
+            <option value="Tous">Toutes les promotions</option>
+            {promotions.map(a => <option key={a} value={a}>{a}</option>)}
+          </select>
         </div>
+
+        {/* Ligne 2 : statut + reset + compteur */}
         <div style={{ display: "flex", flexWrap: "wrap", gap: 6, alignItems: "center" }}>
           <span style={{ fontSize: 11, color: "#64748b", marginRight: 4, fontWeight: 600 }}>STATUT</span>
-          {STATUTS.map(s => (
-            <button key={s} onClick={() => setFiltre(s)} style={{
-              padding: "5px 12px", borderRadius: 6, fontSize: 12, fontWeight: 500, cursor: "pointer",
-              backgroundColor: filtre === s ? "#1a3a6b" : "#FFFFFF",
-              color: filtre === s ? "#fff" : "#64748b",
-              border: `1px solid ${filtre === s ? "#1a3a6b" : "#E2E8F0"}`,
-            }}>{s}</button>
-          ))}
-          <span style={{ fontSize: 12, color: "#64748b", marginLeft: "auto", fontWeight: 500 }}>{displayed.length} étudiant(s) trouvé(s)</span>
+          {STATUTS.map(s => <FilterBtn key={s} active={filtreStatut === s} onClick={() => setFiltreStatut(s)}>{s}</FilterBtn>)}
+          <div style={{ display: "flex", alignItems: "center", gap: 12, marginLeft: "auto" }}>
+            {hasActiveFilters && (
+              <button onClick={resetFilters} style={{
+                padding: "5px 12px", borderRadius: 6, fontSize: 12, fontWeight: 500, cursor: "pointer",
+                backgroundColor: "#FFFFFF", color: "#dc2626", border: "1px solid #fca5a5",
+              }}>
+                Réinitialiser
+              </button>
+            )}
+            <span style={{ fontSize: 12, color: "#64748b", fontWeight: 500 }}>{displayed.length} étudiant(s) trouvé(s)</span>
+          </div>
         </div>
       </div>
 
@@ -119,7 +173,7 @@ export default function DashboardProfesseur({ module: moduleProp, onLogout }) {
       <div style={{ backgroundColor: "#FFFFFF", border: "1px solid #E2E8F0", borderRadius: 8, overflow: "hidden", boxShadow: "0 1px 3px rgba(0,0,0,0.06)" }}>
         <table style={{ width: "100%", borderCollapse: "collapse" }}>
           <thead>
-            <tr>{["Nom", "Filière", "Séances NJ", "Taux NJ", "Taux Total", "Statut", "Dernière absence"].map(h => <th key={h} style={S.th}>{h}</th>)}</tr>
+            <tr>{["Nom", "Promotion", "Séances NJ", "Taux NJ", "Taux Total", "Statut", "Dernière absence"].map(h => <th key={h} style={S.th}>{h}</th>)}</tr>
           </thead>
           <tbody>
             {displayed.length === 0

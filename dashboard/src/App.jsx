@@ -22,7 +22,7 @@ export default function App() {
   }
 
   if (session.role === "professeur") {
-    return <DashboardProfesseur module={session.data.module} onLogout={handleLogout} />;
+    return <DashboardProfesseur module={session.data.module} filiere={session.data.filiere || ""} onLogout={handleLogout} />;
   }
 
   if (session.role === "administration") {

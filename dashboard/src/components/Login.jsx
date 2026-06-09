@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { getModules, authCheckEmail, authRegister, authLogin } from "../api";
+import { getModules, getModuleClasses, authCheckEmail, authRegister, authLogin } from "../api";
 
 const GREEN = "#8DC63F";
 const GREEN_DARK = "#6fa52e";
@@ -93,8 +93,11 @@ export default function Login({ onLogin }) {
   // Professeur state
   const [nom, setNom] = useState("");
   const [module, setModule] = useState("");
+  const [filiere, setFiliere] = useState("");
   const [modules, setModules] = useState([]);
+  const [filieresForModule, setFilieresForModule] = useState([]);
   const [loadingModules, setLoadingModules] = useState(false);
+  const [loadingClasses, setLoadingClasses] = useState(false);
 
   const [error, setError] = useState("");
 
@@ -106,6 +109,8 @@ export default function Login({ onLogin }) {
     setPassword("");
     setConfirmPassword("");
     setPrenom("");
+    setFiliere("");
+    setFilieresForModule([]);
     if (selectedRole === "professeur") {
       setLoadingModules(true);
       try {
@@ -187,12 +192,27 @@ export default function Login({ onLogin }) {
     setLoading(false);
   };
 
+  const handleModuleChange = async (selectedModule) => {
+    setModule(selectedModule);
+    setFiliere("");
+    setFilieresForModule([]);
+    if (!selectedModule) return;
+    setLoadingClasses(true);
+    try {
+      const data = await getModuleClasses(selectedModule);
+      setFilieresForModule(data.filieres || []);
+    } catch {
+      setFilieresForModule([]);
+    }
+    setLoadingClasses(false);
+  };
+
   const handleProfesseur = () => {
     if (!nom.trim() || !module) {
       setError("Veuillez renseigner votre nom et sélectionner un module");
       return;
     }
-    onLogin("professeur", { nom, module });
+    onLogin("professeur", { nom, module, filiere });
   };
 
   const EyeIcon = ({ visible }) => (
@@ -427,7 +447,7 @@ export default function Login({ onLogin }) {
             ) : (
               <select
                 value={module}
-                onChange={(e) => setModule(e.target.value)}
+                onChange={(e) => handleModuleChange(e.target.value)}
                 style={{
                   width: "100%",
                   padding: "10px 14px",
@@ -438,6 +458,7 @@ export default function Login({ onLogin }) {
                   boxSizing: "border-box",
                   color: "#1e293b",
                   background: "#fff",
+                  marginBottom: 14,
                 }}
               >
                 <option value="">Sélectionner un module</option>
@@ -446,8 +467,42 @@ export default function Login({ onLogin }) {
                 ))}
               </select>
             )}
-            {error && <div style={{ marginTop: 12 }}><ErrorBox msg={error} /></div>}
-            <div style={{ marginTop: 16 }}>
+
+            {module && (
+              <>
+                <label style={{ fontSize: 12, fontWeight: 600, color: "#374151", display: "block", marginBottom: 6 }}>
+                  Filière <span style={{ fontWeight: 400, color: "#94a3b8" }}>(optionnel)</span>
+                </label>
+                {loadingClasses ? (
+                  <div style={{ fontSize: 12, color: "#94a3b8", marginBottom: 14 }}>Chargement des filières...</div>
+                ) : (
+                  <select
+                    value={filiere}
+                    onChange={(e) => setFiliere(e.target.value)}
+                    style={{
+                      width: "100%",
+                      padding: "10px 14px",
+                      borderRadius: 8,
+                      border: "1.5px solid #cbd5e1",
+                      fontSize: 14,
+                      outline: "none",
+                      boxSizing: "border-box",
+                      color: "#1e293b",
+                      background: "#fff",
+                      marginBottom: 14,
+                    }}
+                  >
+                    <option value="">Toutes les filières</option>
+                    {filieresForModule.map((f) => (
+                      <option key={f} value={f}>{f}</option>
+                    ))}
+                  </select>
+                )}
+              </>
+            )}
+
+            {error && <div style={{ marginTop: 4 }}><ErrorBox msg={error} /></div>}
+            <div style={{ marginTop: 8 }}>
               <button
                 onClick={handleProfesseur}
                 style={btnStyle(false)}

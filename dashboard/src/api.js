@@ -5,8 +5,9 @@ export const getEtudiants = () => fetch(`${BASE}/api/etudiants`).then(r => r.jso
 export const getEtudiant  = (id) => fetch(`${BASE}/api/etudiant/${id}`).then(r => r.json());
 export const getAlertes   = () => fetch(`${BASE}/api/alertes`).then(r => r.json());
 export const postSync     = () => fetch(`${BASE}/api/sync`, { method: "POST" }).then(r => r.json());
-export const getModules   = () => fetch(`${BASE}/api/modules`).then(r => r.json());
-export const getFilieres  = () => fetch(`${BASE}/api/filieres`).then(r => r.json());
+export const getModules       = () => fetch(`${BASE}/api/modules`).then(r => r.json());
+export const getFilieres      = () => fetch(`${BASE}/api/filieres`).then(r => r.json());
+export const getModuleClasses = (module) => fetch(`${BASE}/api/module-classes?module=${encodeURIComponent(module)}`).then(r => r.json());
 
 const _post = (url, body) =>
   fetch(`${BASE}${url}`, {

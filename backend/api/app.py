@@ -229,6 +229,19 @@ def filieres():
     return jsonify(fils)
 
 
+@app.route("/api/module-classes")
+def module_classes():
+    module_name = request.args.get("module", "")
+    _, _, _, _, profils = _get_data()
+    if not profils:
+        return jsonify({"erreur": "dataset.xlsx introuvable"}), 404
+    matching = [p for p in profils if any(m.module == module_name for m in p.modules)]
+    return jsonify({
+        "filieres":   sorted(set(p.filiere for p in matching if p.filiere)),
+        "promotions": sorted(set(p.annee   for p in matching if p.annee)),
+    })
+
+
 @app.route("/api/auth/check-email", methods=["POST"])
 def auth_check_email():
     payload = request.get_json(silent=True) or {}
