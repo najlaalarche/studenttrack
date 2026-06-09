@@ -1,13 +1,19 @@
 import { useEffect, useState } from "react";
-import { getEtudiants } from "../../api.js";
+import { getEtudiants, getFilieres, getModules } from "../../api.js";
 import StatutBadge from "../../components/StatutBadge.jsx";
 
 const RISQUES   = ["Tous", "faible", "modéré", "critique"];
-const STATUTS_F = ["Tous", "AVERTI", "EXCLU"];
+const STATUTS_F = ["Tous", "AUTORISE", "AVERTI", "EXCLU"];
 
 const S = {
   th: { padding: "10px 16px", fontSize: 11, fontWeight: 600, letterSpacing: "0.07em", textTransform: "uppercase", color: "#64748b", textAlign: "left", borderBottom: "1px solid #E2E8F0", whiteSpace: "nowrap", backgroundColor: "#F8FAFC" },
   td: { padding: "12px 16px", fontSize: 13, borderBottom: "1px solid #E2E8F0", color: "#1e293b" },
+};
+
+const selectStyle = {
+  padding: "7px 12px", borderRadius: 6, fontSize: 12,
+  backgroundColor: "#FFFFFF", border: "1px solid #E2E8F0",
+  color: "#1e293b", outline: "none", cursor: "pointer", minWidth: 150,
 };
 
 function Spinner() {
@@ -32,15 +38,26 @@ function FilterBtn({ active, onClick, children }) {
 
 export default function PageEtudiants({ onSelectEtudiant }) {
   const [liste, setListe]       = useState([]);
+  const [filieres, setFilieres] = useState([]);
+  const [modules, setModules]   = useState([]);
   const [error, setError]       = useState(null);
   const [loading, setLoading]   = useState(true);
-  const [filtreRisque, setFiltreRisque] = useState("Tous");
-  const [filtreStatut, setFiltreStatut] = useState("Tous");
-  const [search, setSearch]     = useState("");
+
+  const [filtreFiliere, setFiltreFiliere] = useState("Tous");
+  const [filtreAnnee, setFiltreAnnee]     = useState("Tous");
+  const [filtreModule, setFiltreModule]   = useState("Tous");
+  const [filtreRisque, setFiltreRisque]   = useState("Tous");
+  const [filtreStatut, setFiltreStatut]   = useState("Tous");
+  const [search, setSearch]               = useState("");
 
   useEffect(() => {
-    getEtudiants()
-      .then(data => { if (data.erreur) throw new Error(); setListe(data); })
+    Promise.all([getEtudiants(), getFilieres(), getModules()])
+      .then(([data, fils, mods]) => {
+        if (data.erreur) throw new Error();
+        setListe(data);
+        setFilieres(Array.isArray(fils) ? fils : []);
+        setModules(Array.isArray(mods) ? mods : []);
+      })
       .catch(() => setError("Connexion au serveur impossible. Vérifiez que le backend tourne sur le port 5050."))
       .finally(() => setLoading(false));
   }, []);
@@ -48,10 +65,18 @@ export default function PageEtudiants({ onSelectEtudiant }) {
   if (loading) return <Spinner />;
   if (error)   return <p style={{ fontSize: 13, color: "#dc2626", padding: 16 }}>{error}</p>;
 
+  const promotions = [...new Set(liste.map(e => e.annee).filter(Boolean))].sort();
+
   const displayed = liste.filter(e => {
+    if (filtreFiliere !== "Tous" && e.filiere !== filtreFiliere) return false;
+    if (filtreAnnee !== "Tous" && e.annee !== filtreAnnee) return false;
+    if (filtreModule !== "Tous") {
+      if (!(e.modules ?? []).some(m => m.module === filtreModule)) return false;
+    }
     if (filtreRisque !== "Tous" && e.niveau_risque !== filtreRisque) return false;
     if (filtreStatut !== "Tous") {
-      if (!(e.modules ?? []).some(m => m.statut_exam === filtreStatut)) return false;
+      const globalSt = e.nb_modules_exclu > 0 ? "EXCLU" : e.nb_modules_averti > 0 ? "AVERTI" : "AUTORISE";
+      if (globalSt !== filtreStatut) return false;
     }
     if (search) {
       const q = search.toLowerCase();
@@ -60,26 +85,70 @@ export default function PageEtudiants({ onSelectEtudiant }) {
     return true;
   });
 
+  const hasActiveFilters =
+    filtreFiliere !== "Tous" || filtreAnnee !== "Tous" || filtreModule !== "Tous" ||
+    filtreRisque !== "Tous" || filtreStatut !== "Tous" || search !== "";
+
+  function resetFilters() {
+    setFiltreFiliere("Tous");
+    setFiltreAnnee("Tous");
+    setFiltreModule("Tous");
+    setFiltreRisque("Tous");
+    setFiltreStatut("Tous");
+    setSearch("");
+  }
+
   return (
     <div>
       <h2 style={{ fontSize: 18, fontWeight: 700, color: "#1a3a6b", marginBottom: 24 }}>Étudiants</h2>
 
-      <div style={{ display: "flex", flexWrap: "wrap", gap: 16, marginBottom: 20, alignItems: "center" }}>
-        <input
-          placeholder="Rechercher…"
-          value={search}
-          onChange={e => setSearch(e.target.value)}
-          style={{ padding: "7px 12px", borderRadius: 6, fontSize: 12, backgroundColor: "#FFFFFF", border: "1px solid #E2E8F0", color: "#1e293b", outline: "none", minWidth: 180 }}
-        />
-        <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
-          <span style={{ fontSize: 11, color: "#64748b", marginRight: 4, fontWeight: 600 }}>RISQUE</span>
-          {RISQUES.map(r => <FilterBtn key={r} active={filtreRisque === r} onClick={() => setFiltreRisque(r)}>{r}</FilterBtn>)}
+      <div style={{ backgroundColor: "#F8FAFC", border: "1px solid #E2E8F0", borderRadius: 8, padding: "16px 20px", marginBottom: 20 }}>
+        {/* Ligne 1 : recherche + dropdowns */}
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 10, marginBottom: 14 }}>
+          <input
+            placeholder="Rechercher par nom ou email…"
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+            style={{ ...selectStyle, minWidth: 220 }}
+          />
+          <select value={filtreFiliere} onChange={e => setFiltreFiliere(e.target.value)} style={selectStyle}>
+            <option value="Tous">Toutes les filières</option>
+            {filieres.map(f => <option key={f} value={f}>{f}</option>)}
+          </select>
+          <select value={filtreAnnee} onChange={e => setFiltreAnnee(e.target.value)} style={selectStyle}>
+            <option value="Tous">Toutes les promotions</option>
+            {promotions.map(a => <option key={a} value={a}>{a}</option>)}
+          </select>
+          <select value={filtreModule} onChange={e => setFiltreModule(e.target.value)} style={selectStyle}>
+            <option value="Tous">Tous les modules</option>
+            {modules.map(m => <option key={m} value={m}>{m}</option>)}
+          </select>
         </div>
-        <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
-          <span style={{ fontSize: 11, color: "#64748b", marginRight: 4, fontWeight: 600 }}>STATUT</span>
-          {STATUTS_F.map(s => <FilterBtn key={s} active={filtreStatut === s} onClick={() => setFiltreStatut(s)}>{s}</FilterBtn>)}
+
+        {/* Ligne 2 : boutons risque + statut + reset + compteur */}
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 12, alignItems: "center" }}>
+          <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
+            <span style={{ fontSize: 11, color: "#64748b", marginRight: 4, fontWeight: 600 }}>RISQUE</span>
+            {RISQUES.map(r => <FilterBtn key={r} active={filtreRisque === r} onClick={() => setFiltreRisque(r)}>{r}</FilterBtn>)}
+          </div>
+          <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
+            <span style={{ fontSize: 11, color: "#64748b", marginRight: 4, fontWeight: 600 }}>STATUT</span>
+            {STATUTS_F.map(s => <FilterBtn key={s} active={filtreStatut === s} onClick={() => setFiltreStatut(s)}>{s}</FilterBtn>)}
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 12, marginLeft: "auto" }}>
+            {hasActiveFilters && (
+              <button onClick={resetFilters} style={{
+                padding: "5px 12px", borderRadius: 6, fontSize: 12, fontWeight: 500, cursor: "pointer",
+                backgroundColor: "#FFFFFF", color: "#dc2626", border: "1px solid #fca5a5",
+              }}>
+                Réinitialiser les filtres
+              </button>
+            )}
+            <span style={{ fontSize: 12, color: "#64748b", fontWeight: 500 }}>
+              {displayed.length} étudiant(s) trouvé(s)
+            </span>
+          </div>
         </div>
-        <span style={{ fontSize: 12, color: "#64748b", marginLeft: "auto" }}>{displayed.length} résultat(s)</span>
       </div>
 
       <div style={{ backgroundColor: "#FFFFFF", border: "1px solid #E2E8F0", borderRadius: 8, overflow: "auto", boxShadow: "0 1px 3px rgba(0,0,0,0.08)" }}>

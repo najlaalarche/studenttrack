@@ -21,6 +21,7 @@ function Spinner() {
 export default function DashboardProfesseur({ module: moduleProp, onLogout }) {
   const [rows, setRows]       = useState([]);
   const [filtre, setFiltre]   = useState("Tous");
+  const [search, setSearch]   = useState("");
   const [error, setError]     = useState(null);
   const [loading, setLoading] = useState(true);
 
@@ -43,7 +44,15 @@ export default function DashboardProfesseur({ module: moduleProp, onLogout }) {
     load();
   }, [moduleProp]);
 
-  const displayed = filtre === "Tous" ? rows : rows.filter(r => r.modInfo.statut_exam === filtre);
+  const displayed = rows.filter(r => {
+    if (filtre !== "Tous" && r.modInfo.statut_exam !== filtre) return false;
+    if (search) {
+      const q = search.toLowerCase();
+      const e = r.etudiant;
+      if (!(e.nom.toLowerCase().includes(q) || e.prenom.toLowerCase().includes(q) || e.email.toLowerCase().includes(q))) return false;
+    }
+    return true;
+  });
   const counts = { AUTORISE: 0, AVERTI: 0, EXCLU: 0 };
   rows.forEach(r => { counts[r.modInfo.statut_exam] = (counts[r.modInfo.statut_exam] ?? 0) + 1; });
 
@@ -83,16 +92,27 @@ export default function DashboardProfesseur({ module: moduleProp, onLogout }) {
       </div>
 
       {/* Filtres */}
-      <div style={{ display: "flex", gap: 6, marginBottom: 16 }}>
-        {STATUTS.map(s => (
-          <button key={s} onClick={() => setFiltre(s)} style={{
-            padding: "6px 12px", borderRadius: 6, fontSize: 12, fontWeight: 500, cursor: "pointer",
-            backgroundColor: filtre === s ? "#1a3a6b" : "#FFFFFF",
-            color: filtre === s ? "#fff" : "#64748b",
-            border: `1px solid ${filtre === s ? "#1a3a6b" : "#E2E8F0"}`,
-          }}>{s}</button>
-        ))}
-        <span style={{ fontSize: 12, color: "#64748b", alignSelf: "center", marginLeft: 8 }}>{displayed.length} résultat(s)</span>
+      <div style={{ backgroundColor: "#F8FAFC", border: "1px solid #E2E8F0", borderRadius: 8, padding: "12px 16px", marginBottom: 16 }}>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 10, marginBottom: 10 }}>
+          <input
+            placeholder="Rechercher par nom ou email…"
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+            style={{ padding: "7px 12px", borderRadius: 6, fontSize: 12, backgroundColor: "#FFFFFF", border: "1px solid #E2E8F0", color: "#1e293b", outline: "none", minWidth: 220 }}
+          />
+        </div>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 6, alignItems: "center" }}>
+          <span style={{ fontSize: 11, color: "#64748b", marginRight: 4, fontWeight: 600 }}>STATUT</span>
+          {STATUTS.map(s => (
+            <button key={s} onClick={() => setFiltre(s)} style={{
+              padding: "5px 12px", borderRadius: 6, fontSize: 12, fontWeight: 500, cursor: "pointer",
+              backgroundColor: filtre === s ? "#1a3a6b" : "#FFFFFF",
+              color: filtre === s ? "#fff" : "#64748b",
+              border: `1px solid ${filtre === s ? "#1a3a6b" : "#E2E8F0"}`,
+            }}>{s}</button>
+          ))}
+          <span style={{ fontSize: 12, color: "#64748b", marginLeft: "auto", fontWeight: 500 }}>{displayed.length} étudiant(s) trouvé(s)</span>
+        </div>
       </div>
 
       {/* Tableau */}
