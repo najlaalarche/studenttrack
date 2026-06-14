@@ -498,6 +498,7 @@ def import_absences_csv():
 
 @app.route("/api/sessions-programme")
 def sessions_programme():
+    """Retourne les session_programme distincts depuis etudiants (rétrocompat)."""
     conn = _db()
     rows = conn.execute(
         "SELECT DISTINCT session_programme FROM etudiants"
@@ -506,6 +507,20 @@ def sessions_programme():
     ).fetchall()
     conn.close()
     return jsonify([r[0] for r in rows])
+
+
+@app.route("/api/session-programmes")
+def session_programmes_list():
+    """Retourne les 27 filières comme options de session — source unique pour le formulaire."""
+    conn = _db()
+    rows = conn.execute(
+        "SELECT id, nom, code, niveau FROM filieres ORDER BY code, niveau"
+    ).fetchall()
+    conn.close()
+    return jsonify([
+        {"id": r[0], "nom": r[1], "code": r[2], "niveau": r[3]}
+        for r in rows
+    ])
 
 
 @app.route("/api/etudiants/paginated")
@@ -567,8 +582,11 @@ def etudiants_ajouter():
     email = _gen_email(prenom, nom)
     conn  = _db()
 
-    id_filiere = None
-    if session_prog:
+    # id_filiere : priorité au paramètre direct, sinon dérivé du session_programme
+    id_filiere = p.get("id_filiere") or None
+    if id_filiere:
+        id_filiere = int(id_filiere)
+    elif session_prog:
         row = conn.execute(
             "SELECT id_filiere FROM etudiants WHERE session_programme=? AND id_filiere IS NOT NULL LIMIT 1",
             (session_prog,),

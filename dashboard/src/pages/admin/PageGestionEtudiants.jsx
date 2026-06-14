@@ -35,8 +35,8 @@ function genEmail(prenom, nom) {
 }
 
 export default function PageGestionEtudiants() {
-  const [sessions, setSessions] = useState([]);
-  const [form, setForm]   = useState({ nom: "", prenom: "", id_inscr: "", session: "", cursus: "" });
+  const [filieres, setFilieres] = useState([]);      // [{id, code, niveau, nom}] — 27 entrées
+  const [form, setForm] = useState({ nom: "", prenom: "", id_inscr: "", filiere_id: "", cursus: "" });
   const [msg, setMsg]     = useState(null);
   const [saving, setSaving] = useState(false);
 
@@ -49,9 +49,12 @@ export default function PageGestionEtudiants() {
   const totalPages = Math.max(1, Math.ceil(total / LIMIT));
   const emailGenere = genEmail(form.prenom, form.nom);
 
+  // Charge les 27 filières comme options de session
   useEffect(() => {
-    fetch(`${BASE}/api/sessions-programme`)
-      .then(r => r.json()).then(setSessions).catch(() => {});
+    fetch(`${BASE}/api/session-programmes`)
+      .then(r => r.json())
+      .then(data => setFilieres(Array.isArray(data) ? data : []))
+      .catch(() => {});
   }, []);
 
   const loadList = useCallback(() => {
@@ -64,6 +67,8 @@ export default function PageGestionEtudiants() {
   }, [page, search]);
 
   useEffect(() => { loadList(); }, [loadList]);
+
+  const selectedFiliere = filieres.find(f => String(f.id) === String(form.filiere_id)) || null;
 
   function field(key) {
     return {
@@ -80,6 +85,9 @@ export default function PageGestionEtudiants() {
     }
     setSaving(true);
     setMsg(null);
+    const sessionProg = selectedFiliere
+      ? `${selectedFiliere.code} ${selectedFiliere.niveau}`
+      : "";
     try {
       const res = await fetch(`${BASE}/api/etudiants/ajouter`, {
         method: "POST",
@@ -88,7 +96,8 @@ export default function PageGestionEtudiants() {
           nom: form.nom.trim(),
           prenom: form.prenom.trim(),
           id_inscriptionsessionprogramme: form.id_inscr.trim(),
-          session_programme: form.session,
+          id_filiere: form.filiere_id ? parseInt(form.filiere_id) : null,
+          session_programme: sessionProg,
           cursus: form.cursus.trim(),
         }),
       }).then(r => r.json());
@@ -103,7 +112,7 @@ export default function PageGestionEtudiants() {
       } else if (res.success) {
         const et = res.etudiant;
         setMsg({ type: "success", text: `✓ Étudiant ajouté : ${et.prenom} ${et.nom} (${et.email})` });
-        setForm({ nom: "", prenom: "", id_inscr: "", session: "", cursus: "" });
+        setForm({ nom: "", prenom: "", id_inscr: "", filiere_id: "", cursus: "" });
         setPage(1);
         loadList();
       } else {
@@ -131,7 +140,7 @@ export default function PageGestionEtudiants() {
       }).then(r => r.json());
       if (res.success) {
         setMsg({ type: "success", text: `✓ Étudiant mis à jour (ID ${existant.id})` });
-        setForm({ nom: "", prenom: "", id_inscr: "", session: "", cursus: "" });
+        setForm({ nom: "", prenom: "", id_inscr: "", filiere_id: "", cursus: "" });
         loadList();
       } else {
         setMsg({ type: "error", text: res.error || "Erreur de mise à jour" });
@@ -188,22 +197,28 @@ export default function PageGestionEtudiants() {
           </div>
 
           <div>
-            <label style={LABEL}>Session Programme</label>
+            <label style={LABEL}>
+              Filière / Session Programme
+              {filieres.length > 0 && (
+                <span style={{ fontWeight: 400, color: "#94a3b8", marginLeft: 6 }}>({filieres.length} filières)</span>
+              )}
+            </label>
             <select
               style={{ ...INPUT, cursor: "pointer" }}
-              value={form.session}
-              onChange={e => setForm(prev => ({ ...prev, session: e.target.value }))}
+              value={form.filiere_id}
+              onChange={e => setForm(prev => ({ ...prev, filiere_id: e.target.value }))}
             >
-              <option value="">— Sélectionner —</option>
-              {sessions.map(s => <option key={s} value={s}>{s}</option>)}
-              <option value="__autre__">Autre…</option>
+              <option value="">— Sélectionner une filière —</option>
+              {filieres.map(f => (
+                <option key={f.id} value={f.id}>
+                  {f.code} · {f.niveau}
+                </option>
+              ))}
             </select>
-            {form.session === "__autre__" && (
-              <input
-                style={{ ...INPUT, marginTop: 6 }}
-                placeholder="Saisir manuellement"
-                onChange={e => setForm(prev => ({ ...prev, session: e.target.value }))}
-              />
+            {filieres.length === 0 && (
+              <div style={{ fontSize: 11, color: "#dc2626", marginTop: 4 }}>
+                ⚠ Impossible de charger les filières — vérifier que le backend est démarré
+              </div>
             )}
           </div>
 
