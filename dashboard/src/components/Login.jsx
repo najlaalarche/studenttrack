@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { getModules, authCheckEmail, authRegister, authLogin } from "../api";
+import { getModules, authCheckEmail, authRegister, authLogin, authAdminLogin } from "../api";
 
 const GREEN = "#8DC63F";
 const GREEN_DARK = "#6fa52e";
@@ -90,6 +90,10 @@ export default function Login({ onLogin }) {
   const [showConfirm, setShowConfirm] = useState(false);
   const [loading, setLoading] = useState(false);
 
+  // Administration state
+  const [adminPassword, setAdminPassword] = useState("");
+  const [showAdminPassword, setShowAdminPassword] = useState(false);
+
   // Professeur state
   const [nom, setNom] = useState("");
   const [module, setModule] = useState("");
@@ -123,7 +127,8 @@ export default function Login({ onLogin }) {
       setLoadingModules(false);
     }
     if (selectedRole === "administration") {
-      onLogin("administration", {});
+      setAdminPassword("");
+      setShowAdminPassword(false);
     }
   };
 
@@ -199,6 +204,23 @@ export default function Login({ onLogin }) {
     setFiliere("");
     const obj = modules.find(m => m.nom === selectedNom) || null;
     setSelectedModuleObj(obj);
+  };
+
+  const handleAdminLogin = async () => {
+    if (!adminPassword) { setError("Veuillez saisir le mot de passe"); return; }
+    setError("");
+    setLoading(true);
+    try {
+      const res = await authAdminLogin(adminPassword);
+      if (res.success) {
+        onLogin("administration", {});
+      } else {
+        setError(res.error || "Mot de passe incorrect");
+      }
+    } catch {
+      setError("Erreur de connexion au serveur");
+    }
+    setLoading(false);
   };
 
   const handleProfesseur = () => {
@@ -421,6 +443,35 @@ export default function Login({ onLogin }) {
             <ErrorBox msg="Cet email n'est pas reconnu dans le système ESITH" />
             <BackLink onClick={() => { setStep(1); setError(""); }} />
           </>
+        )}
+
+        {/* ---- ADMINISTRATION ---- */}
+        {role === "administration" && (
+          <div style={{ marginBottom: 16 }}>
+            <div style={{ fontSize: 14, fontWeight: 600, color: "#1a2a4a", marginBottom: 12 }}>
+              Accès Administration
+            </div>
+            <InputField
+              label="Mot de passe"
+              type={showAdminPassword ? "text" : "password"}
+              placeholder="Mot de passe administration"
+              value={adminPassword}
+              onChange={(e) => setAdminPassword(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && handleAdminLogin()}
+              rightEl={
+                <span
+                  onClick={() => setShowAdminPassword((v) => !v)}
+                  style={{ fontSize: 16, cursor: "pointer", color: "#94a3b8" }}
+                >
+                  {showAdminPassword ? "👁" : "🙈"}
+                </span>
+              }
+            />
+            {error && <ErrorBox msg={error} />}
+            <button onClick={handleAdminLogin} disabled={loading} style={btnStyle(loading)}>
+              {loading ? "Vérification..." : "Accéder →"}
+            </button>
+          </div>
         )}
 
         {/* ---- PROFESSEUR ---- */}

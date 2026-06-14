@@ -43,12 +43,12 @@ function VueEnsemble() {
   if (error)   return <p style={{ fontSize: 13, color: "#dc2626" }}>{error}</p>;
 
   const top10 = [...etudiants]
-    .sort((a, b) => b.score_global - a.score_global)
+    .sort((a, b) => b.score_risque - a.score_risque)
     .slice(0, 10)
     .map(e => ({
       name: `${e.prenom} ${e.nom}`.length > 18 ? `${e.prenom} ${e.nom}`.substring(0, 18) + "…" : `${e.prenom} ${e.nom}`,
-      score: e.score_global,
-      color: e.score_global >= 70 ? "#EF4444" : e.score_global >= 40 ? "#F59E0B" : "#8DC63F",
+      score: e.score_risque,
+      color: e.score_risque >= 70 ? "#EF4444" : e.score_risque >= 40 ? "#F59E0B" : "#8DC63F",
     }));
 
   const pieData = [

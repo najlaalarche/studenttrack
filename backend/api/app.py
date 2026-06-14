@@ -59,6 +59,48 @@ def _serialize(obj):
     return _to_python(obj)
 
 
+def _get_alerte_id_for_profil(profil) -> int | None:
+    """Retourne l'id DB de l'alerte la plus grave (EXCLU > AVERTI) pour ce profil."""
+    try:
+        id_et = int(profil.id_etudiant)
+    except (ValueError, TypeError):
+        return None
+    exclu = [m for m in profil.modules if m.statut_exam == "EXCLU"]
+    avert = [m for m in profil.modules if m.statut_exam == "AVERTI"]
+    target = exclu or avert
+    if not target:
+        return None
+    id_module = target[0].id_module
+    conn = _db()
+    row = conn.execute(
+        "SELECT id FROM alertes WHERE id_etudiant = ? AND id_module = ?",
+        (id_et, id_module),
+    ).fetchone()
+    conn.close()
+    return row["id"] if row else None
+
+
+def _get_statut_validation_info(alerte_id: int | None) -> tuple[str, str | None]:
+    """Retourne (statut_validation, envoye_le) depuis emails_log (actions admin uniquement)."""
+    if alerte_id is None:
+        return "en_attente", None
+    conn = _db()
+    row = conn.execute(
+        "SELECT type_email, envoye, envoye_le FROM emails_log"
+        " WHERE id_alerte = ? AND type_email IN ('avert_admin','exclu_admin','rejete')"
+        " ORDER BY id DESC LIMIT 1",
+        (alerte_id,),
+    ).fetchone()
+    conn.close()
+    if not row:
+        return "en_attente", None
+    if row["type_email"] == "rejete":
+        return "rejete", None
+    if row["envoye"]:
+        return "envoye", row["envoye_le"]
+    return "en_attente", None
+
+
 # ── Cache mémoire ─────────────────────────────────────────────────────────────
 
 _cache: dict = {"data": None}
@@ -257,10 +299,75 @@ def alertes():
         return jsonify({"erreur": "Base SQLite vide ou introuvable"}), 404
     en_alerte = filtrer_alertes(profils)
     resultats = traiter_alertes(en_alerte)
-    return jsonify([
-        {"profil": _serialize(r["profil"]), "decision": _serialize(r["decision"])}
-        for r in resultats
-    ])
+    out = []
+    for r in resultats:
+        alerte_id = _get_alerte_id_for_profil(r["profil"])
+        statut_val, envoye_le = _get_statut_validation_info(alerte_id)
+        out.append({
+            "profil":             _serialize(r["profil"]),
+            "decision":           _serialize(r["decision"]),
+            "id_alerte":          alerte_id,
+            "statut_validation":  statut_val,
+            "envoye_le":          envoye_le,
+        })
+    return jsonify(out)
+
+
+@app.route("/api/alertes/<int:alerte_id>/valider", methods=["POST"])
+def valider_alerte(alerte_id: int):
+    payload = request.get_json(silent=True) or {}
+    sujet = (payload.get("email_sujet") or "").strip()
+    corps = (payload.get("email_corps") or "").strip()
+    if not sujet or not corps:
+        return jsonify({"success": False, "error": "email_sujet et email_corps requis"}), 400
+
+    conn = _db()
+    row = conn.execute(
+        "SELECT a.statut, e.email FROM alertes a"
+        " JOIN etudiants e ON a.id_etudiant = e.id WHERE a.id = ?",
+        (alerte_id,),
+    ).fetchone()
+    if not row:
+        conn.close()
+        return jsonify({"success": False, "error": "Alerte non trouvée"}), 404
+
+    from backend.agent.ia_agent import send_email as _send_brevo
+    sent = _send_brevo(row["email"], sujet, corps)
+
+    type_email = "exclu_admin" if row["statut"] == "EXCLU" else "avert_admin"
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    conn.execute(
+        "INSERT INTO emails_log (id_alerte, destinataire, sujet, type_email, envoye, envoye_le)"
+        " VALUES (?, ?, ?, ?, ?, ?)",
+        (alerte_id, row["email"], sujet, type_email, 1 if sent else 0, now if sent else None),
+    )
+    conn.commit()
+    conn.close()
+
+    if sent:
+        return jsonify({"success": True, "envoye_le": now})
+    return jsonify({"success": False, "error": "Échec de l'envoi Brevo — vérifier BREVO_API_KEY"})
+
+
+@app.route("/api/alertes/<int:alerte_id>/rejeter", methods=["POST"])
+def rejeter_alerte(alerte_id: int):
+    conn = _db()
+    row = conn.execute(
+        "SELECT e.email FROM alertes a JOIN etudiants e ON a.id_etudiant = e.id WHERE a.id = ?",
+        (alerte_id,),
+    ).fetchone()
+    if not row:
+        conn.close()
+        return jsonify({"success": False, "error": "Alerte non trouvée"}), 404
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    conn.execute(
+        "INSERT INTO emails_log (id_alerte, destinataire, sujet, type_email, envoye, envoye_le)"
+        " VALUES (?, ?, ?, ?, ?, ?)",
+        (alerte_id, row["email"], "", "rejete", 0, now),
+    )
+    conn.commit()
+    conn.close()
+    return jsonify({"success": True})
 
 
 @app.route("/api/alerts/send", methods=["POST"])
@@ -431,6 +538,18 @@ def auth_login():
     if not result["success"]:
         return jsonify(result), 401
     return jsonify(result)
+
+
+@app.route("/api/auth/admin-login", methods=["POST"])
+def auth_admin_login():
+    payload = request.get_json(silent=True) or {}
+    password = payload.get("password", "")
+    admin_pw = os.environ.get("ADMIN_PASSWORD", "")
+    if not admin_pw:
+        return jsonify({"success": False, "error": "ADMIN_PASSWORD non configuré dans .env"}), 500
+    if password == admin_pw:
+        return jsonify({"success": True})
+    return jsonify({"success": False, "error": "Mot de passe incorrect"}), 401
 
 
 @app.route("/api/import-csv", methods=["POST"])
