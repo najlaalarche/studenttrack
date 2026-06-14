@@ -1,6 +1,4 @@
 import { useEffect, useState } from "react";
-import { getAlertes } from "../../api.js";
-import StatutBadge from "../../components/StatutBadge.jsx";
 
 const BASE = "http://localhost:5050";
 
@@ -8,189 +6,161 @@ function Spinner() {
   return (
     <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: 200 }}>
       <div style={{ width: 24, height: 24, border: "2px solid #E2E8F0", borderTop: "2px solid #1a3a6b", borderRadius: "50%", animation: "spin 0.8s linear infinite" }} />
-      <style>{`@keyframes spin { to { transform: rotate(360deg); }}`}</style>
+      <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
     </div>
   );
 }
 
-function BtnSpinner() {
+function StatutBadge({ statut }) {
+  const cfg = {
+    EXCLU:    { bg: "rgba(239,68,68,0.1)",   border: "rgba(239,68,68,0.35)",   color: "#dc2626" },
+    AVERTI:   { bg: "rgba(245,158,11,0.1)",  border: "rgba(245,158,11,0.35)",  color: "#d97706" },
+    AUTORISE: { bg: "rgba(141,198,63,0.1)",  border: "rgba(141,198,63,0.35)",  color: "#5a9e14" },
+  }[statut] || { bg: "#f1f5f9", border: "#e2e8f0", color: "#64748b" };
   return (
-    <span style={{ display: "inline-block", width: 12, height: 12, border: "2px solid rgba(255,255,255,0.4)", borderTop: "2px solid #fff", borderRadius: "50%", animation: "spin 0.6s linear infinite", marginRight: 6 }} />
+    <span style={{
+      fontSize: 10, fontWeight: 700, padding: "2px 8px", borderRadius: 99,
+      backgroundColor: cfg.bg, border: `1px solid ${cfg.border}`, color: cfg.color,
+      textTransform: "uppercase", letterSpacing: "0.05em",
+    }}>{statut}</span>
   );
 }
 
-export default function PageAlertes() {
-  const [alertes, setAlertes] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError]     = useState(null);
-  // actions : { [id_alerte]: { loading, statut, envoye_le, error } }
-  const [actions, setActions] = useState({});
+function FilterBtn({ active, onClick, children }) {
+  return (
+    <button onClick={onClick} style={{
+      padding: "5px 12px", borderRadius: 6, fontSize: 12, fontWeight: 500, cursor: "pointer",
+      backgroundColor: active ? "#1a3a6b" : "#FFFFFF",
+      color: active ? "#fff" : "#64748b",
+      border: `1px solid ${active ? "#1a3a6b" : "#E2E8F0"}`,
+    }}>{children}</button>
+  );
+}
+
+export default function PageHistoriqueAlertes() {
+  const [alertes, setAlertes]         = useState([]);
+  const [loading, setLoading]         = useState(true);
+  const [error, setError]             = useState(null);
+  const [filtreStatut, setFiltreStatut] = useState("Tous");
+  const [filtreEnvoi, setFiltreEnvoi] = useState("Tous");
 
   useEffect(() => {
-    getAlertes()
+    fetch(`${BASE}/api/alertes`)
+      .then(r => r.json())
       .then(data => {
-        if (data.erreur) throw new Error();
-        setAlertes(data);
-        const init = {};
-        for (const a of data) {
-          if (a.id_alerte != null) {
-            init[a.id_alerte] = {
-              loading:   false,
-              statut:    a.statut_validation || "en_attente",
-              envoye_le: a.envoye_le || null,
-              error:     null,
-            };
-          }
-        }
-        setActions(init);
+        if (data.erreur) throw new Error(data.erreur);
+        setAlertes(Array.isArray(data) ? data : []);
       })
       .catch(() => setError("Connexion au serveur impossible. Vérifiez que le backend tourne sur le port 5050."))
       .finally(() => setLoading(false));
   }, []);
 
-  function setAction(id, patch) {
-    setActions(prev => ({ ...prev, [id]: { ...prev[id], ...patch } }));
-  }
-
-  async function handleValider(id_alerte, email_sujet, email_corps) {
-    setAction(id_alerte, { loading: true, error: null });
-    try {
-      const res = await fetch(`${BASE}/api/alertes/${id_alerte}/valider`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email_sujet, email_corps }),
-      }).then(r => r.json());
-
-      if (res.success) {
-        setAction(id_alerte, { loading: false, statut: "envoye", envoye_le: res.envoye_le, error: null });
-      } else {
-        setAction(id_alerte, { loading: false, error: res.error || "Échec de l'envoi" });
-      }
-    } catch {
-      setAction(id_alerte, { loading: false, error: "Erreur de connexion au serveur" });
-    }
-  }
-
-  async function handleRejeter(id_alerte) {
-    setAction(id_alerte, { loading: true, error: null });
-    try {
-      await fetch(`${BASE}/api/alertes/${id_alerte}/rejeter`, { method: "POST" });
-      setAction(id_alerte, { loading: false, statut: "rejete", envoye_le: null, error: null });
-    } catch {
-      setAction(id_alerte, { loading: false, error: "Erreur de connexion au serveur" });
-    }
-  }
+  const displayed = alertes.filter(a => {
+    if (filtreStatut !== "Tous" && a.statut !== filtreStatut) return false;
+    if (filtreEnvoi === "Envoyé" && !a.envoye_auto) return false;
+    if (filtreEnvoi === "En attente" && a.envoye_auto) return false;
+    return true;
+  });
 
   if (loading) return <Spinner />;
   if (error)   return <p style={{ fontSize: 13, color: "#dc2626", padding: 16 }}>{error}</p>;
-  if (!alertes.length) return (
-    <div>
-      <h2 style={{ fontSize: 18, fontWeight: 700, color: "#1a3a6b", marginBottom: 16 }}>Alertes</h2>
-      <p style={{ fontSize: 13, color: "#64748b" }}>Aucune alerte en cours.</p>
-    </div>
-  );
 
   return (
     <div>
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 24 }}>
-        <h2 style={{ fontSize: 18, fontWeight: 700, color: "#1a3a6b", margin: 0 }}>Alertes — Décisions IA</h2>
-        <span style={{ fontSize: 12, color: "#64748b" }}>{alertes.length} alerte(s)</span>
+      {/* Header */}
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 20 }}>
+        <h2 style={{ fontSize: 18, fontWeight: 700, color: "#1a3a6b", margin: 0 }}>
+          Historique des Alertes
+        </h2>
+        <span style={{ fontSize: 12, color: "#64748b" }}>{alertes.length} alerte(s) au total</span>
       </div>
 
+      {/* Filtres */}
+      <div style={{ display: "flex", gap: 16, marginBottom: 20, flexWrap: "wrap" }}>
+        <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+          <span style={{ fontSize: 11, fontWeight: 600, color: "#64748b", textTransform: "uppercase", letterSpacing: "0.06em" }}>Statut</span>
+          {["Tous", "AVERTI", "EXCLU"].map(s => (
+            <FilterBtn key={s} active={filtreStatut === s} onClick={() => setFiltreStatut(s)}>{s}</FilterBtn>
+          ))}
+        </div>
+        <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+          <span style={{ fontSize: 11, fontWeight: 600, color: "#64748b", textTransform: "uppercase", letterSpacing: "0.06em" }}>Envoi</span>
+          {["Tous", "Envoyé", "En attente"].map(s => (
+            <FilterBtn key={s} active={filtreEnvoi === s} onClick={() => setFiltreEnvoi(s)}>{s}</FilterBtn>
+          ))}
+        </div>
+        <span style={{ fontSize: 12, color: "#64748b", alignSelf: "center", marginLeft: "auto" }}>
+          {displayed.length} résultat(s)
+        </span>
+      </div>
+
+      {displayed.length === 0 && (
+        <div style={{ backgroundColor: "#F8FAFC", border: "1px solid #E2E8F0", borderRadius: 8, padding: "40px 24px", textAlign: "center" }}>
+          <p style={{ fontSize: 13, color: "#64748b", margin: 0 }}>Aucune alerte dans l'historique.</p>
+        </div>
+      )}
+
       <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-        {alertes.map(({ profil: p, decision: d, id_alerte }) => {
-          const act     = actions[id_alerte] || { loading: false, statut: "en_attente", envoye_le: null, error: null };
-          const isTraite = act.statut === "envoye" || act.statut === "rejete";
-
-          return (
-            <div key={id_alerte ?? p.id_etudiant} style={{ backgroundColor: "#FFFFFF", border: "1px solid #E2E8F0", borderRadius: 8, padding: "24px", boxShadow: "0 1px 3px rgba(0,0,0,0.08)" }}>
-
-              {/* En-tête */}
-              <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 20 }}>
-                <div>
-                  <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 4 }}>
-                    <span style={{ fontSize: 15, fontWeight: 700, color: "#1e293b" }}>{p.prenom} {p.nom}</span>
-                    <StatutBadge statut={d.action === "NOTIFY_EXCLUSION" ? "EXCLU" : "AVERTI"} />
-                  </div>
-                  <div style={{ fontSize: 12, color: "#64748b" }}>{p.email} · Score {p.score_global}/100 · {p.niveau_risque}</div>
+        {displayed.map(a => (
+          <div key={a.id_alerte} style={{
+            backgroundColor: "#FFFFFF", border: "1px solid #E2E8F0",
+            borderRadius: 8, padding: "24px",
+            boxShadow: "0 1px 3px rgba(0,0,0,0.08)",
+            borderLeft: a.statut === "EXCLU" ? "4px solid #ef4444" : a.statut === "AVERTI" ? "4px solid #f59e0b" : "4px solid #8DC63F",
+          }}>
+            {/* En-tête */}
+            <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 16 }}>
+              <div>
+                <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 4 }}>
+                  <span style={{ fontSize: 15, fontWeight: 700, color: "#1e293b" }}>{a.prenom} {a.nom}</span>
+                  <StatutBadge statut={a.statut} />
                 </div>
-
-                {/* Badge état validation */}
-                {act.statut === "envoye" && (
-                  <span style={{ fontSize: 11, fontWeight: 600, padding: "4px 10px", borderRadius: 99, backgroundColor: "rgba(141,198,63,0.1)", border: "1px solid rgba(141,198,63,0.35)", color: "#5a9e14", whiteSpace: "nowrap" }}>
-                    ✓ Envoyé {act.envoye_le ? `le ${act.envoye_le.slice(0, 16)}` : ""}
-                  </span>
-                )}
-                {act.statut === "rejete" && (
-                  <span style={{ fontSize: 11, fontWeight: 600, padding: "4px 10px", borderRadius: 99, backgroundColor: "rgba(239,68,68,0.07)", border: "1px solid rgba(239,68,68,0.25)", color: "#dc2626" }}>
-                    ✕ Rejeté
-                  </span>
-                )}
-                {act.statut === "en_attente" && (
-                  <span style={{ fontSize: 11, fontWeight: 600, padding: "4px 10px", borderRadius: 99, backgroundColor: "rgba(26,58,107,0.08)", border: "1px solid rgba(26,58,107,0.25)", color: "#1a3a6b" }}>
-                    En attente
-                  </span>
-                )}
+                <div style={{ fontSize: 12, color: "#64748b" }}>
+                  {a.email}
+                  {a.filiere ? ` · ${a.filiere}` : ""}
+                  {a.module_nom ? ` · ${a.module_nom}` : ""}
+                </div>
+                <div style={{ fontSize: 11, color: "#94a3b8", marginTop: 3 }}>
+                  NJ : {(a.taux_nj ?? 0).toFixed(1)}% &nbsp;|&nbsp; Total : {(a.taux_total ?? 0).toFixed(1)}%
+                </div>
               </div>
 
-              {/* Email IA */}
-              <div style={{ backgroundColor: "#F8FAFC", border: "1px solid #E2E8F0", borderRadius: 6, padding: "16px 18px", marginBottom: 16 }}>
-                <div style={{ fontSize: 11, fontWeight: 600, letterSpacing: "0.08em", textTransform: "uppercase", color: "#64748b", marginBottom: 6 }}>Sujet</div>
-                <div style={{ fontSize: 13, fontWeight: 600, color: "#1e293b", marginBottom: 14 }}>{d.email_sujet || "—"}</div>
-                <div style={{ fontSize: 11, fontWeight: 600, letterSpacing: "0.08em", textTransform: "uppercase", color: "#64748b", marginBottom: 6 }}>Corps</div>
-                <div
-                  style={{ fontSize: 13, lineHeight: 1.65, color: "#475569" }}
-                  dangerouslySetInnerHTML={{ __html: d.email_corps || "—" }}
-                />
-              </div>
-
-              <div style={{ fontSize: 11, color: "#94a3b8", fontStyle: "italic", marginBottom: 16 }}>
-                IA : {d.explication || "—"} — généré le {d.genere_le}
-              </div>
-
-              {/* Message d'erreur */}
-              {act.error && (
-                <div style={{ fontSize: 12, color: "#dc2626", backgroundColor: "#fef2f2", border: "1px solid #fecaca", borderRadius: 6, padding: "8px 12px", marginBottom: 12 }}>
-                  {act.error}
-                </div>
-              )}
-
-              {/* Boutons */}
-              {!isTraite ? (
-                <div style={{ display: "flex", gap: 10 }}>
-                  <button
-                    onClick={() => handleValider(id_alerte, d.email_sujet, d.email_corps)}
-                    disabled={act.loading || id_alerte == null}
-                    style={{
-                      display: "flex", alignItems: "center",
-                      padding: "8px 16px", borderRadius: 6, fontSize: 12, fontWeight: 600, cursor: act.loading ? "not-allowed" : "pointer",
-                      backgroundColor: act.loading ? "#a0aec0" : "#8DC63F", color: "#fff", border: "none",
-                    }}
-                  >
-                    {act.loading ? <><BtnSpinner />Envoi…</> : "✓ Valider & Envoyer"}
-                  </button>
-                  <button
-                    onClick={() => handleRejeter(id_alerte)}
-                    disabled={act.loading || id_alerte == null}
-                    style={{
-                      padding: "8px 16px", borderRadius: 6, fontSize: 12, fontWeight: 600, cursor: act.loading ? "not-allowed" : "pointer",
-                      backgroundColor: "transparent", color: "#dc2626", border: "1px solid rgba(239,68,68,0.4)",
-                    }}
-                  >
-                    ✕ Rejeter
-                  </button>
-                </div>
+              {/* Badge envoi */}
+              {a.envoye_auto ? (
+                <span style={{
+                  fontSize: 11, fontWeight: 600, padding: "5px 12px", borderRadius: 99, whiteSpace: "nowrap",
+                  backgroundColor: "rgba(141,198,63,0.12)", border: "1px solid rgba(141,198,63,0.4)", color: "#5a9e14",
+                }}>
+                  ✓ Envoyé automatiquement{a.envoye_le ? ` le ${a.envoye_le.slice(0, 16)}` : ""}
+                </span>
               ) : (
-                <button
-                  onClick={() => setAction(id_alerte, { statut: "en_attente", envoye_le: null, error: null })}
-                  style={{ padding: "6px 12px", borderRadius: 6, fontSize: 11, cursor: "pointer", backgroundColor: "#F8FAFC", color: "#64748b", border: "1px solid #E2E8F0" }}
-                >
-                  Modifier
-                </button>
+                <span style={{
+                  fontSize: 11, fontWeight: 600, padding: "5px 12px", borderRadius: 99,
+                  backgroundColor: "rgba(245,158,11,0.1)", border: "1px solid rgba(245,158,11,0.35)", color: "#d97706",
+                }}>
+                  ⏳ En attente
+                </span>
               )}
             </div>
-          );
-        })}
+
+            {/* Aperçu email */}
+            <div style={{ backgroundColor: "#F8FAFC", border: "1px solid #E2E8F0", borderRadius: 6, padding: "14px 16px" }}>
+              <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", color: "#94a3b8", marginBottom: 4 }}>Sujet</div>
+              <div style={{ fontSize: 13, fontWeight: 600, color: "#1e293b", marginBottom: 12 }}>{a.email_sujet || "—"}</div>
+              <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", color: "#94a3b8", marginBottom: 6 }}>Corps</div>
+              <div
+                style={{ fontSize: 13, lineHeight: 1.65, color: "#475569" }}
+                dangerouslySetInnerHTML={{ __html: a.email_corps || "—" }}
+              />
+            </div>
+
+            {a.updated_at && (
+              <div style={{ fontSize: 11, color: "#94a3b8", marginTop: 10, fontStyle: "italic" }}>
+                Mise à jour : {a.updated_at.slice(0, 16)}
+              </div>
+            )}
+          </div>
+        ))}
       </div>
     </div>
   );

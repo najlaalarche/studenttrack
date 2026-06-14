@@ -229,6 +229,67 @@ def analyser_et_rediger(profil) -> DecisionIA:
     return _mock_decision(profil)
 
 
+# ── Envoi automatique (déclenché par import CSV) ──────────────────────────────
+
+def envoyer_alerte_auto(id_etudiant: int, id_module: int, conn: sqlite3.Connection) -> list[dict]:
+    """Envoie l'email si seuil franchi ET pas déjà envoyé. Sans validation humaine."""
+    alerte = conn.execute(
+        "SELECT id, statut, taux_nj, taux_total, avert_envoye, exclu_envoye"
+        " FROM alertes WHERE id_etudiant=? AND id_module=?",
+        (id_etudiant, id_module),
+    ).fetchone()
+    if not alerte:
+        return []
+
+    alerte_id    = alerte[0]
+    statut       = alerte[1]
+    taux_nj      = float(alerte[2] or 0)
+    taux_total   = float(alerte[3] or 0)
+    avert_envoye = bool(alerte[4])
+    exclu_envoye = bool(alerte[5])
+
+    et = conn.execute("SELECT nom, prenom, email FROM etudiants WHERE id=?", (id_etudiant,)).fetchone()
+    if not et:
+        return []
+    nom, prenom, email_et = et[0], et[1], et[2]
+
+    mod = conn.execute("SELECT nom FROM modules WHERE id=?", (id_module,)).fetchone()
+    mod_nom = mod[0] if mod else "Module inconnu"
+
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    results = []
+
+    if statut == "AVERTI" and not avert_envoye:
+        html  = _html_avertissement(nom, prenom, mod_nom, taux_nj)
+        sujet = f"Avertissement absences — {mod_nom} — ESITH Casablanca"
+        sent  = send_email(email_et, sujet, html)
+        if sent:
+            conn.execute(
+                "UPDATE alertes SET avert_envoye=1, updated_at=? WHERE id=?", (now, alerte_id)
+            )
+            _log_email_to_db(conn, alerte_id, email_et, sujet, "avert", True)
+            conn.commit()
+        results.append({"sent": sent, "type": "avert", "module": mod_nom})
+
+    elif statut == "EXCLU" and not exclu_envoye:
+        html  = _html_exclusion(nom, prenom, mod_nom, taux_total)
+        sujet = f"Exclusion d'examen — {mod_nom} — ESITH Casablanca"
+        sent_et = send_email(email_et, sujet, html)
+        if sent_et:
+            conn.execute(
+                "UPDATE alertes SET exclu_envoye=1, updated_at=? WHERE id=?", (now, alerte_id)
+            )
+            _log_email_to_db(conn, alerte_id, email_et, sujet, "exclu", True)
+        if EMAIL_ADMIN:
+            sent_adm = send_email(EMAIL_ADMIN, sujet, html)
+            if sent_adm:
+                _log_email_to_db(conn, alerte_id, EMAIL_ADMIN, sujet, "exclu_admin", True)
+        conn.commit()
+        results.append({"sent": sent_et, "type": "exclu", "module": mod_nom})
+
+    return results
+
+
 # ── Traitement des alertes ────────────────────────────────────────────────────
 
 def traiter_alertes(profils: list) -> list[dict]:

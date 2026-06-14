@@ -1,8 +1,10 @@
 const NAV = [
-  { key: "overview",  icon: "◈", label: "Vue d'ensemble" },
-  { key: "etudiants", icon: "⊞", label: "Étudiants" },
-  { key: "alertes",   icon: "◉", label: "Alertes" },
-  { key: "sync",      icon: "↻", label: "Synchronisation" },
+  { key: "overview",          icon: "◈", label: "Vue d'ensemble" },
+  { key: "etudiants",         icon: "⊞", label: "Étudiants" },
+  { key: "alertes",           icon: "◉", label: "Historique des Alertes" },
+  { key: "importation",       icon: "↑", label: "Importation CSV" },
+  { key: "gestion-etudiants", icon: "✦", label: "Gestion Étudiants" },
+  { key: "sync",              icon: "↻", label: "Synchronisation" },
 ];
 
 export default function Sidebar({ active, onNav, onLogout, userName }) {
@@ -33,7 +35,6 @@ export default function Sidebar({ active, onNav, onLogout, userName }) {
 
       <div style={{ height: 1, backgroundColor: "#E2E8F0", marginBottom: 12 }} />
 
-      {/* Nav */}
       <nav style={{ display: "flex", flexDirection: "column", gap: 2, flex: 1 }}>
         {NAV.map((item) => {
           const isActive = active === item.key;
@@ -61,7 +62,6 @@ export default function Sidebar({ active, onNav, onLogout, userName }) {
         })}
       </nav>
 
-      {/* Footer */}
       <div style={{ borderTop: "1px solid #E2E8F0", paddingTop: 12 }}>
         {userName && (
           <div style={{ padding: "6px 10px", fontSize: 12, color: "#1a3a6b", fontWeight: 500, marginBottom: 4, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>

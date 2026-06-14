@@ -5,6 +5,8 @@ import KpiCard from "../../components/KpiCard.jsx";
 import PageEtudiants from "./PageEtudiants.jsx";
 import PageAlertes from "./PageAlertes.jsx";
 import PageDetailEtudiant from "./PageDetailEtudiant.jsx";
+import PageImportation from "./PageImportation.jsx";
+import PageGestionEtudiants from "./PageGestionEtudiants.jsx";
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell,
   PieChart, Pie, Legend,
@@ -173,10 +175,12 @@ export default function DashboardAdmin({ onLogout }) {
     <div style={{ minHeight: "100vh", backgroundColor: "#FFFFFF" }}>
       <Sidebar active={selected ? "etudiants" : page} onNav={handleNav} onLogout={onLogout} userName="Administration" />
       <main style={{ marginLeft: 220, padding: "40px 36px", minHeight: "100vh" }}>
-        {page === "overview"  && !selected && <VueEnsemble />}
-        {page === "etudiants" && !selected && <PageEtudiants onSelectEtudiant={id => setSelected(id)} />}
-        {page === "alertes"   && !selected && <PageAlertes />}
-        {page === "sync"      && !selected && <PageSync />}
+        {page === "overview"          && !selected && <VueEnsemble />}
+        {page === "etudiants"         && !selected && <PageEtudiants onSelectEtudiant={id => setSelected(id)} />}
+        {page === "alertes"           && !selected && <PageAlertes />}
+        {page === "importation"       && !selected && <PageImportation />}
+        {page === "gestion-etudiants" && !selected && <PageGestionEtudiants />}
+        {page === "sync"              && !selected && <PageSync />}
         {selected && <PageDetailEtudiant id_etudiant={selected} onBack={() => { setSelected(null); setPage("etudiants"); }} />}
       </main>
     </div>
