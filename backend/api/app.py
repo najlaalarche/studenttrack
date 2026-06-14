@@ -79,6 +79,40 @@ def _get_data():
     return _cache["data"]
 
 
+def _envoyer_alertes_etudiants_apres_sync(profils: list, nouvelles_absences: pd.DataFrame) -> dict:
+    if nouvelles_absences is None or nouvelles_absences.empty:
+        return {"processed": 0, "sent": 0, "failed": 0, "skipped": 0, "results": []}
+
+    ids_touches = set(nouvelles_absences["id_etudiant"].astype(str).tolist())
+    modules_touches = (
+        nouvelles_absences.assign(id_etudiant=nouvelles_absences["id_etudiant"].astype(str))
+        .groupby("id_etudiant")["module"]
+        .apply(lambda values: set(values.astype(str)))
+        .to_dict()
+    )
+    profils_touches = [p for p in filtrer_alertes(profils) if p.id_etudiant in ids_touches]
+    results = []
+
+    for profil in profils_touches:
+        profil_data = _serialize(profil)
+        modules_du_delta = modules_touches.get(profil.id_etudiant, set())
+        profil_data["modules"] = [
+            module
+            for module in profil_data.get("modules", [])
+            if str(module.get("module", "")) in modules_du_delta
+        ]
+        if profil_data["modules"]:
+            results.extend(process_student_alerts(profil_data, notify_staff=False))
+
+    return {
+        "processed": len(profils_touches),
+        "sent": sum(1 for r in results if r.get("sent")),
+        "failed": sum(1 for r in results if not r.get("sent") and r.get("reason") != "doublon"),
+        "skipped": sum(1 for r in results if r.get("reason") == "doublon"),
+        "results": results,
+    }
+
+
 # ── Auth (SQLite users) ───────────────────────────────────────────────────────
 
 def _check_email_db(email: str) -> dict:
@@ -412,9 +446,15 @@ def sync():
     _cache["data"] = None
     nouvelles, changed = detect_delta()
     _cache["data"] = _charger_tout()
+    df_abs, profils = _cache["data"]
+    if changed:
+        email_alerts = _envoyer_alertes_etudiants_apres_sync(profils, nouvelles)
+    else:
+        email_alerts = {"processed": 0, "sent": 0, "failed": 0, "skipped": 0, "results": []}
     return jsonify({
         "nouvelles_lignes": len(nouvelles),
         "changed": bool(changed),
+        "email_alerts": email_alerts,
     })
 
 
