@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { getModules, getModuleClasses, authCheckEmail, authRegister, authLogin } from "../api";
+import { getModules, authCheckEmail, authRegister, authLogin } from "../api";
 
 const GREEN = "#8DC63F";
 const GREEN_DARK = "#6fa52e";
@@ -93,11 +93,11 @@ export default function Login({ onLogin }) {
   // Professeur state
   const [nom, setNom] = useState("");
   const [module, setModule] = useState("");
+  const [semestre, setSemestre] = useState("Tous");
   const [filiere, setFiliere] = useState("");
-  const [modules, setModules] = useState([]);
-  const [filieresForModule, setFilieresForModule] = useState([]);
+  const [modules, setModules] = useState([]); // [{nom, filieres, semestres}]
+  const [selectedModuleObj, setSelectedModuleObj] = useState(null);
   const [loadingModules, setLoadingModules] = useState(false);
-  const [loadingClasses, setLoadingClasses] = useState(false);
 
   const [error, setError] = useState("");
 
@@ -110,7 +110,8 @@ export default function Login({ onLogin }) {
     setConfirmPassword("");
     setPrenom("");
     setFiliere("");
-    setFilieresForModule([]);
+    setSemestre("Tous");
+    setSelectedModuleObj(null);
     if (selectedRole === "professeur") {
       setLoadingModules(true);
       try {
@@ -192,19 +193,12 @@ export default function Login({ onLogin }) {
     setLoading(false);
   };
 
-  const handleModuleChange = async (selectedModule) => {
-    setModule(selectedModule);
+  const handleModuleChange = (selectedNom) => {
+    setModule(selectedNom);
+    setSemestre("Tous");
     setFiliere("");
-    setFilieresForModule([]);
-    if (!selectedModule) return;
-    setLoadingClasses(true);
-    try {
-      const data = await getModuleClasses(selectedModule);
-      setFilieresForModule(data.filieres || []);
-    } catch {
-      setFilieresForModule([]);
-    }
-    setLoadingClasses(false);
+    const obj = modules.find(m => m.nom === selectedNom) || null;
+    setSelectedModuleObj(obj);
   };
 
   const handleProfesseur = () => {
@@ -212,7 +206,7 @@ export default function Login({ onLogin }) {
       setError("Veuillez renseigner votre nom et sélectionner un module");
       return;
     }
-    onLogin("professeur", { nom, module, filiere });
+    onLogin("professeur", { nom, module, semestre, filiere });
   };
 
   const EyeIcon = ({ visible }) => (
@@ -439,65 +433,69 @@ export default function Login({ onLogin }) {
               value={nom}
               onChange={(e) => setNom(e.target.value)}
             />
+
+            {/* Module */}
             <label style={{ fontSize: 12, fontWeight: 600, color: "#374151", display: "block", marginBottom: 6 }}>
               Module
             </label>
             {loadingModules ? (
-              <div style={{ fontSize: 12, color: "#94a3b8" }}>Chargement des modules...</div>
+              <div style={{ fontSize: 12, color: "#94a3b8", marginBottom: 14 }}>Chargement des modules...</div>
             ) : (
               <select
                 value={module}
                 onChange={(e) => handleModuleChange(e.target.value)}
                 style={{
-                  width: "100%",
-                  padding: "10px 14px",
-                  borderRadius: 8,
-                  border: "1.5px solid #cbd5e1",
-                  fontSize: 14,
-                  outline: "none",
-                  boxSizing: "border-box",
-                  color: "#1e293b",
-                  background: "#fff",
-                  marginBottom: 14,
+                  width: "100%", padding: "10px 14px", borderRadius: 8,
+                  border: "1.5px solid #cbd5e1", fontSize: 14, outline: "none",
+                  boxSizing: "border-box", color: "#1e293b", background: "#fff", marginBottom: 14,
                 }}
               >
                 <option value="">Sélectionner un module</option>
                 {modules.map((m) => (
-                  <option key={m} value={m}>{m}</option>
+                  <option key={m.nom} value={m.nom}>{m.nom}</option>
                 ))}
               </select>
             )}
 
+            {/* Semestre */}
             {module && (
               <>
                 <label style={{ fontSize: 12, fontWeight: 600, color: "#374151", display: "block", marginBottom: 6 }}>
+                  Semestre
+                </label>
+                <select
+                  value={semestre}
+                  onChange={(e) => setSemestre(e.target.value)}
+                  style={{
+                    width: "100%", padding: "10px 14px", borderRadius: 8,
+                    border: "1.5px solid #cbd5e1", fontSize: 14, outline: "none",
+                    boxSizing: "border-box", color: "#1e293b", background: "#fff", marginBottom: 14,
+                  }}
+                >
+                  <option value="Tous">Tous les semestres</option>
+                  {(selectedModuleObj?.semestres ?? []).map((s) => (
+                    <option key={s} value={s}>{s}</option>
+                  ))}
+                </select>
+
+                {/* Filière */}
+                <label style={{ fontSize: 12, fontWeight: 600, color: "#374151", display: "block", marginBottom: 6 }}>
                   Filière <span style={{ fontWeight: 400, color: "#94a3b8" }}>(optionnel)</span>
                 </label>
-                {loadingClasses ? (
-                  <div style={{ fontSize: 12, color: "#94a3b8", marginBottom: 14 }}>Chargement des filières...</div>
-                ) : (
-                  <select
-                    value={filiere}
-                    onChange={(e) => setFiliere(e.target.value)}
-                    style={{
-                      width: "100%",
-                      padding: "10px 14px",
-                      borderRadius: 8,
-                      border: "1.5px solid #cbd5e1",
-                      fontSize: 14,
-                      outline: "none",
-                      boxSizing: "border-box",
-                      color: "#1e293b",
-                      background: "#fff",
-                      marginBottom: 14,
-                    }}
-                  >
-                    <option value="">Toutes les filières</option>
-                    {filieresForModule.map((f) => (
-                      <option key={f} value={f}>{f}</option>
-                    ))}
-                  </select>
-                )}
+                <select
+                  value={filiere}
+                  onChange={(e) => setFiliere(e.target.value)}
+                  style={{
+                    width: "100%", padding: "10px 14px", borderRadius: 8,
+                    border: "1.5px solid #cbd5e1", fontSize: 14, outline: "none",
+                    boxSizing: "border-box", color: "#1e293b", background: "#fff", marginBottom: 14,
+                  }}
+                >
+                  <option value="">Toutes les filières</option>
+                  {(selectedModuleObj?.filieres ?? []).map((f) => (
+                    <option key={f} value={f}>{f}</option>
+                  ))}
+                </select>
               </>
             )}
 

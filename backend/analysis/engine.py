@@ -1,9 +1,12 @@
+import sqlite3
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 
 import pandas as pd
 
 ROOT = Path(__file__).resolve().parents[2]
+DB_PATH = ROOT / "data" / "studenttrack.db"
 
 SEUIL_ALERTE    = 20.0
 SEUIL_EXCLUSION = 50.0
@@ -12,12 +15,14 @@ SEUIL_EXCLUSION = 50.0
 @dataclass
 class StatutModule:
     module:              str
-    total_seances:       int
+    id_module:           int
+    semestre:            str
+    total_seances:       int    # = volume_heures
     nb_abs_nj:           int
     nb_abs_just:         int
     nb_abs_total:        int
-    taux_nj:             float
-    taux_total:          float
+    taux_nj:             float  # heures_nj / volume_heures * 100
+    taux_total:          float  # (heures_nj + heures_just) / volume_heures * 100
     seuil_alerte:        float
     seuil_exclusion:     float
     statut_exam:         str
@@ -44,36 +49,57 @@ class ProfilEtudiant:
     nb_modules_exclu:     int  = 0
     nb_modules_averti:    int  = 0
     module_plus_grave:    str  = ""
-    # Scores depuis Scoring_Risque
     moyenne_generale:     float = 0.0
     score_notes:          float = 0.0
     score_absences:       float = 0.0
     score_global:         float = 0.0
     niveau_risque_scoring: str  = "VERT"
-    # Scores calculés localement (compatibilité dashboard)
     score_risque:         float = 0.0
     niveau_risque:        str   = "faible"
     niveau_alerte:        int   = 0
     action_recommandee:   str   = "AUCUNE"
-    # Notes par module
     notes_modules:        list  = field(default_factory=list)
 
 
-def _calculer_statut_module(module_nom: str, grp_mod: pd.DataFrame) -> StatutModule:
-    nb_nj   = int((~grp_mod["justifiee"]).sum())
-    nb_just = int(grp_mod["justifiee"].sum())
+def _get_email_flags(id_etudiant_int: int, id_module: int) -> tuple[bool, bool]:
+    """Lit les flags d'envoi depuis la table alertes."""
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        row = conn.execute(
+            "SELECT avert_envoye, exclu_envoye FROM alertes WHERE id_etudiant=? AND id_module=?",
+            (id_etudiant_int, id_module),
+        ).fetchone()
+        conn.close()
+        if row:
+            return bool(row[0]), bool(row[1])
+    except Exception:
+        pass
+    return False, False
+
+
+def _calculer_statut_module(module_nom: str, id_module: int, grp_mod: pd.DataFrame, id_etudiant_int: int) -> StatutModule:
+    volume_heures = int(grp_mod["volume_heures"].iloc[0]) if len(grp_mod) > 0 else 48
+    if volume_heures <= 0:
+        volume_heures = 48
+
+    semestre = str(grp_mod["semestre"].iloc[0]) if "semestre" in grp_mod.columns and len(grp_mod) > 0 else ""
+
+    nj_mask  = ~grp_mod["justifiee"]
+    jus_mask = grp_mod["justifiee"]
+
+    heures_nj   = float(grp_mod.loc[nj_mask,  "duree_heures"].sum())
+    heures_just = float(grp_mod.loc[jus_mask, "duree_heures"].sum())
+
+    nb_nj   = int(nj_mask.sum())
+    nb_just = int(jus_mask.sum())
     nb_tot  = nb_nj + nb_just
 
-    total_seances = int(grp_mod["total_seances_module"].iloc[0]) if len(grp_mod) > 0 else 1
-    if total_seances <= 0:
-        total_seances = 1
-
-    taux_nj    = round(nb_nj    / total_seances * 100, 2)
-    taux_total = round(nb_tot   / total_seances * 100, 2)
+    taux_nj    = round(heures_nj                   / volume_heures * 100, 2)
+    taux_total = round((heures_nj + heures_just)   / volume_heures * 100, 2)
 
     if taux_total >= SEUIL_EXCLUSION:
         statut = "EXCLU"
-        alerte = f"Exclu : {taux_total:.1f}% des séances manquées"
+        alerte = f"Exclu : {taux_total:.1f}% du volume horaire manqué"
     elif taux_nj >= SEUIL_ALERTE:
         statut = "AVERTI"
         alerte = f"Averti : {taux_nj:.1f}% NJ (seuil {SEUIL_ALERTE:.0f}%)"
@@ -81,9 +107,13 @@ def _calculer_statut_module(module_nom: str, grp_mod: pd.DataFrame) -> StatutMod
         statut = "AUTORISE"
         alerte = ""
 
+    avert_flag, exclu_flag = _get_email_flags(id_etudiant_int, id_module)
+
     return StatutModule(
         module=module_nom,
-        total_seances=total_seances,
+        id_module=id_module,
+        semestre=semestre,
+        total_seances=volume_heures,
         nb_abs_nj=nb_nj,
         nb_abs_just=nb_just,
         nb_abs_total=nb_tot,
@@ -92,33 +122,26 @@ def _calculer_statut_module(module_nom: str, grp_mod: pd.DataFrame) -> StatutMod
         seuil_alerte=SEUIL_ALERTE,
         seuil_exclusion=SEUIL_EXCLUSION,
         statut_exam=statut,
-        avert_email_envoye=False,
-        exclu_email_envoye=False,
+        avert_email_envoye=avert_flag,
+        exclu_email_envoye=exclu_flag,
         alerte_module=alerte,
     )
 
 
-def calculer_profils(
-    df_abs: pd.DataFrame,
-    df_notes: pd.DataFrame,
-    df_etudiants: pd.DataFrame,
-    df_scoring: pd.DataFrame,
-) -> list[ProfilEtudiant]:
+def calculer_profils(df_abs: pd.DataFrame) -> list[ProfilEtudiant]:
     profils = []
-
-    # Index scoring par id_etudiant pour lookup rapide
-    scoring_idx = df_scoring.set_index("id_etudiant") if not df_scoring.empty else pd.DataFrame()
-    notes_idx   = df_notes.groupby("id_etudiant")
 
     for id_etudiant, groupe in df_abs.groupby("id_etudiant"):
         row0 = groupe.iloc[0]
-        nom         = str(row0.get("nom", ""))
-        prenom      = str(row0.get("prenom", ""))
-        email       = str(row0.get("email", "inconnu@esith.net"))
-        filiere     = str(row0.get("filiere", ""))
-        code_filiere= str(row0.get("code_filiere", ""))
-        annee       = str(row0.get("annee", ""))
-        cursus      = str(row0.get("cursus", ""))
+        nom          = str(row0.get("nom", ""))
+        prenom       = str(row0.get("prenom", ""))
+        email        = str(row0.get("email", "inconnu@esith.net"))
+        filiere      = str(row0.get("filiere", ""))
+        code_filiere = str(row0.get("code_filiere", ""))
+        annee        = str(row0.get("annee", ""))
+        cursus       = str(row0.get("cursus", ""))
+
+        id_etudiant_int = int(id_etudiant) if str(id_etudiant).isdigit() else 0
 
         total_nj   = int((~groupe["justifiee"]).sum())
         total_just = int(groupe["justifiee"].sum())
@@ -127,10 +150,10 @@ def calculer_profils(
         dates_valides = groupe["date_absence"].dropna()
         derniere = str(dates_valides.max().date()) if not dates_valides.empty else ""
 
-        # Statut par module
         statuts_modules = []
         for module_nom, grp_mod in groupe.groupby("module"):
-            sm = _calculer_statut_module(module_nom, grp_mod)
+            id_module = int(grp_mod["id_module_db"].iloc[0]) if "id_module_db" in grp_mod.columns else 0
+            sm = _calculer_statut_module(module_nom, id_module, grp_mod, id_etudiant_int)
             statuts_modules.append(sm)
 
         nb_exclu  = sum(1 for s in statuts_modules if s.statut_exam == "EXCLU")
@@ -140,32 +163,19 @@ def calculer_profils(
         plus_grave = max(statuts_modules, key=lambda s: ordre[s.statut_exam], default=None)
         module_grave_nom = plus_grave.module if plus_grave else ""
 
-        # Scoring depuis la feuille Scoring_Risque
-        sid = str(id_etudiant)
-        if not scoring_idx.empty and sid in scoring_idx.index:
-            sr = scoring_idx.loc[sid]
-            score_global   = float(sr.get("Score_Global_Risque", 0))
-            score_abs      = float(sr.get("Score_Absences", 0))
-            score_notes_v  = float(sr.get("Score_Notes", 0))
-            moyenne_gen    = float(sr.get("Moyenne_Generale", 0))
-            niveau_scoring = str(sr.get("Niveau_Risque", "VERT"))
+        if statuts_modules:
+            max_taux_nj    = max(s.taux_nj    for s in statuts_modules)
+            max_taux_total = max(s.taux_total for s in statuts_modules)
+            score_global   = round(max_taux_nj * 0.5 + max_taux_total * 0.5, 2)
         else:
-            score_global   = 0.0
-            score_abs      = 0.0
-            score_notes_v  = 0.0
-            moyenne_gen    = 0.0
-            niveau_scoring = "VERT"
+            score_global = 0.0
 
-        # Niveau risque unifié pour le dashboard
         if score_global >= 70:
             niveau_risque = "critique"
             niveau_alerte = 3
         elif score_global >= 40:
             niveau_risque = "modéré"
             niveau_alerte = 2
-        elif score_global > 0:
-            niveau_risque = "faible"
-            niveau_alerte = 1
         else:
             niveau_risque = "faible"
             niveau_alerte = 0
@@ -177,24 +187,8 @@ def calculer_profils(
         else:
             action = "AUCUNE"
 
-        # Notes par module
-        notes_modules = []
-        try:
-            grp_notes = notes_idx.get_group(sid)
-            for _, nr in grp_notes.iterrows():
-                notes_modules.append({
-                    "module":      str(nr.get("Module", "")),
-                    "note_cc":     float(nr["Note_CC"])     if pd.notna(nr.get("Note_CC"))     else None,
-                    "note_examen": float(nr["Note_Examen"]) if pd.notna(nr.get("Note_Examen")) else None,
-                    "note_finale": float(nr["Note_Finale"]) if pd.notna(nr.get("Note_Finale")) else None,
-                    "mention":     str(nr.get("Mention", "")),
-                    "statut":      str(nr.get("Statut", "")),
-                })
-        except KeyError:
-            pass
-
         profils.append(ProfilEtudiant(
-            id_etudiant=sid,
+            id_etudiant=str(id_etudiant),
             nom=nom,
             prenom=prenom,
             email=email,
@@ -210,47 +204,61 @@ def calculer_profils(
             nb_modules_exclu=nb_exclu,
             nb_modules_averti=nb_averti,
             module_plus_grave=module_grave_nom,
-            moyenne_generale=round(moyenne_gen, 2),
-            score_notes=round(score_notes_v, 2),
-            score_absences=round(score_abs, 2),
-            score_global=round(score_global, 2),
-            niveau_risque_scoring=niveau_scoring,
-            score_risque=round(score_global, 2),
+            score_global=score_global,
+            score_risque=score_global,
+            niveau_risque_scoring="ROUGE" if nb_exclu > 0 else ("ORANGE" if nb_averti > 0 else "VERT"),
             niveau_risque=niveau_risque,
             niveau_alerte=niveau_alerte,
             action_recommandee=action,
-            notes_modules=notes_modules,
         ))
 
     return profils
 
 
 def filtrer_alertes(profils: list) -> list:
-    return [p for p in profils if p.niveau_alerte > 0]
+    return [p for p in profils if p.action_recommandee != "AUCUNE"]
+
+
+def upsert_alertes(profils: list[ProfilEtudiant]):
+    """Écrit ou met à jour la table alertes après calcul des profils."""
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    conn = sqlite3.connect(DB_PATH)
+    for profil in profils:
+        id_etudiant_int = int(profil.id_etudiant) if profil.id_etudiant.isdigit() else 0
+        for mod in profil.modules:
+            if not mod.id_module:
+                continue
+            conn.execute(
+                """INSERT INTO alertes (id_etudiant, id_module, statut, taux_nj, taux_total, updated_at)
+                   VALUES (?, ?, ?, ?, ?, ?)
+                   ON CONFLICT(id_etudiant, id_module) DO UPDATE SET
+                       statut     = excluded.statut,
+                       taux_nj    = excluded.taux_nj,
+                       taux_total = excluded.taux_total,
+                       updated_at = excluded.updated_at""",
+                (id_etudiant_int, mod.id_module, mod.statut_exam, mod.taux_nj, mod.taux_total, now),
+            )
+    conn.commit()
+    conn.close()
 
 
 if __name__ == "__main__":
     import sys
     sys.path.insert(0, str(ROOT))
-    from backend.ingestion.reader import load_dataset
+    from backend.ingestion.reader import load_absences_df
 
-    dataset_path = ROOT / "data" / "dataset.xlsx"
-    if not dataset_path.exists():
-        print("[engine] dataset.xlsx introuvable")
-    else:
-        df_abs, df_notes, df_etudiants, df_scoring = load_dataset(dataset_path)
-        profils = calculer_profils(df_abs, df_notes, df_etudiants, df_scoring)
-        alertes = filtrer_alertes(profils)
+    if not DB_PATH.exists():
+        print("[engine] Base SQLite introuvable")
+        sys.exit(1)
 
-        print(f"[engine] {len(profils)} profils | {len(alertes)} alertes")
-        for p in profils[:5]:
-            print(f"  {p.prenom} {p.nom} | score={p.score_global} | {p.niveau_risque} | {p.action_recommandee}")
-            for m in p.modules:
-                print(f"    [{m.statut_exam}] {m.module} — NJ:{m.nb_abs_nj}/{m.total_seances} ({m.taux_nj:.1f}%)")
+    df_abs = load_absences_df()
+    profils = calculer_profils(df_abs)
+    upsert_alertes(profils)
+    alertes = filtrer_alertes(profils)
 
-        # Vérification étudiant 20001
-        nadia = next((p for p in profils if p.id_etudiant == "20001"), None)
-        if nadia:
-            print(f"\n[engine] Nadia Zouiten : {nadia.prenom} {nadia.nom} | email={nadia.email}")
-        else:
-            print("\n[engine] Étudiant 20001 non trouvé dans les absences")
+    print(f"[engine] {len(profils)} profils | {len(alertes)} alertes")
+    for p in profils:
+        print(f"  {p.prenom} {p.nom} | score={p.score_global} | {p.niveau_risque} | {p.action_recommandee}")
+        for m in p.modules:
+            if m.statut_exam != "AUTORISE":
+                print(f"    [{m.statut_exam}] {m.module} — NJ:{m.nb_abs_nj} ({m.taux_nj:.1f}%) | total:{m.taux_total:.1f}% / {m.total_seances}h")

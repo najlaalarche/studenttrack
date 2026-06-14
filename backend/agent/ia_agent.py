@@ -1,5 +1,6 @@
 import json
 import os
+import sqlite3
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -7,9 +8,9 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 ROOT = Path(__file__).resolve().parents[2]
+DB_PATH = ROOT / "data" / "studenttrack.db"
+EMAILS_LOG_FILE = ROOT / "data" / "emails_log.json"  # kept as fallback
 load_dotenv(ROOT / ".env")
-
-EMAILS_LOG_FILE = ROOT / "data" / "emails_log.json"
 
 BREVO_API_KEY     = os.environ.get("BREVO_API_KEY", "")
 EMAIL_SENDER      = os.environ.get("EMAIL_SENDER", "")
@@ -21,14 +22,14 @@ EMAIL_ADMIN       = os.environ.get("EMAIL_ADMIN", "")
 class DecisionIA:
     doit_alerter: bool
     action: str
-    destinataire: str       # "etudiant" | "etudiant+administration"
+    destinataire: str
     email_sujet: str
     email_corps: str
     explication: str
     genere_le: str
 
 
-# ─── Emails log (anti-doublon) ──────────────────────────────────────────────
+# ── JSON emails log (anti-doublon fallback) ───────────────────────────────────
 
 def _load_emails_log() -> dict:
     if not EMAILS_LOG_FILE.exists():
@@ -41,7 +42,43 @@ def _save_emails_log(data: dict):
     EMAILS_LOG_FILE.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
 
 
-# ─── Envoi email via Brevo ───────────────────────────────────────────────────
+# ── DB helpers ────────────────────────────────────────────────────────────────
+
+def _get_alerte_id(conn: sqlite3.Connection, id_etudiant: str, id_module: int) -> int | None:
+    try:
+        id_et = int(id_etudiant)
+    except (ValueError, TypeError):
+        return None
+    row = conn.execute(
+        "SELECT id FROM alertes WHERE id_etudiant = ? AND id_module = ?",
+        (id_et, id_module),
+    ).fetchone()
+    return row[0] if row else None
+
+
+def _log_email_to_db(conn: sqlite3.Connection, alerte_id: int | None, destinataire: str,
+                     sujet: str, type_email: str, envoye: bool):
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    conn.execute(
+        "INSERT INTO emails_log (id_alerte, destinataire, sujet, type_email, envoye, envoye_le)"
+        " VALUES (?, ?, ?, ?, ?, ?)",
+        (alerte_id, destinataire, sujet, type_email, envoye, now if envoye else None),
+    )
+
+
+def _update_alerte_flags(conn: sqlite3.Connection, alerte_id: int, type_email: str):
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    if type_email == "avert":
+        conn.execute(
+            "UPDATE alertes SET avert_envoye = 1, updated_at = ? WHERE id = ?", (now, alerte_id)
+        )
+    elif type_email == "exclu":
+        conn.execute(
+            "UPDATE alertes SET exclu_envoye = 1, updated_at = ? WHERE id = ?", (now, alerte_id)
+        )
+
+
+# ── Envoi Brevo ───────────────────────────────────────────────────────────────
 
 def send_email(to_email: str, subject: str, body_html: str) -> bool:
     import requests
@@ -56,47 +93,46 @@ def send_email(to_email: str, subject: str, body_html: str) -> bool:
         "subject": subject,
         "htmlContent": body_html,
     }
-    headers = {
-        "api-key": BREVO_API_KEY,
-        "Content-Type": "application/json",
-    }
     try:
         r = requests.post(
             "https://api.brevo.com/v3/smtp/email",
             json=payload,
-            headers=headers,
+            headers={"api-key": BREVO_API_KEY, "Content-Type": "application/json"},
             timeout=15,
         )
         if r.status_code in (200, 201):
             print(f"[send_email] OK -> {to_email} | {subject}")
             return True
-        else:
-            print(f"[send_email] Erreur {r.status_code} -> {r.text[:200]}")
-            return False
+        print(f"[send_email] Erreur {r.status_code} -> {r.text[:200]}")
+        return False
     except Exception as e:
         print(f"[send_email] Exception : {e}")
         return False
 
 
 def _html_avertissement(nom: str, prenom: str, module: str, taux_nj: float) -> str:
-    return f"""<h2 style="color:#1a3a6b">Avertissement — Absences ESITH</h2>
-<p>Madame/Monsieur <strong>{prenom} {nom}</strong>,</p>
-<p>Votre taux d'absences non justifiées dans le module <strong>{module}</strong> a atteint <strong>{taux_nj:.1f}%</strong>.</p>
-<p>Le seuil critique est fixé à <strong>50%</strong>. Merci de régulariser votre situation.</p>
-<br>
-<p style="color:#64748b">Service de la Scolarité — ESITH Casablanca — StudentTrack</p>"""
+    return (
+        f'<h2 style="color:#1a3a6b">Avertissement — Absences ESITH</h2>'
+        f"<p>Madame/Monsieur <strong>{prenom} {nom}</strong>,</p>"
+        f"<p>Votre taux d'absences non justifiées dans le module <strong>{module}</strong>"
+        f" a atteint <strong>{taux_nj:.1f}%</strong>.</p>"
+        f"<p>Le seuil critique est fixé à <strong>50%</strong>. Merci de régulariser votre situation.</p>"
+        f'<br><p style="color:#64748b">Service de la Scolarité — ESITH Casablanca — StudentTrack</p>'
+    )
 
 
 def _html_exclusion(nom: str, prenom: str, module: str, taux_total: float) -> str:
-    return f"""<h2 style="color:#ef4444">Exclusion d'examen — ESITH Casablanca</h2>
-<p>Madame/Monsieur <strong>{prenom} {nom}</strong>,</p>
-<p>Votre taux d'absences total dans le module <strong>{module}</strong> a atteint <strong>{taux_total:.1f}%</strong>.</p>
-<p>Conformément au règlement, vous ne pouvez pas passer l'examen de ce module.</p>
-<br>
-<p style="color:#64748b">Service de la Scolarité — ESITH Casablanca — StudentTrack</p>"""
+    return (
+        f'<h2 style="color:#ef4444">Exclusion d\'examen — ESITH Casablanca</h2>'
+        f"<p>Madame/Monsieur <strong>{prenom} {nom}</strong>,</p>"
+        f"<p>Votre taux d'absences total dans le module <strong>{module}</strong>"
+        f" a atteint <strong>{taux_total:.1f}%</strong>.</p>"
+        f"<p>Conformément au règlement, vous ne pouvez pas passer l'examen de ce module.</p>"
+        f'<br><p style="color:#64748b">Service de la Scolarité — ESITH Casablanca — StudentTrack</p>'
+    )
 
 
-# ─── Décision IA (mock ou API Claude) ───────────────────────────────────────
+# ── Décision IA ───────────────────────────────────────────────────────────────
 
 def _mock_decision(profil) -> DecisionIA:
     now = datetime.now().strftime("%Y-%m-%d %H:%M")
@@ -106,14 +142,13 @@ def _mock_decision(profil) -> DecisionIA:
         modules_exclu = [m for m in profil.modules if m.statut_exam == "EXCLU"]
         mod = modules_exclu[0] if modules_exclu else None
         mod_nom = mod.module if mod else "Inconnu"
-        taux = f"{mod.taux_total:.1f}" if mod else "??"
         return DecisionIA(
             doit_alerter=True,
             action=action,
             destinataire="etudiant+administration",
             email_sujet=f"Exclusion d'examen — {mod_nom} — ESITH Casablanca",
             email_corps=_html_exclusion(profil.nom, profil.prenom, mod_nom, mod.taux_total if mod else 0),
-            explication=f"Taux total {taux}% >= 50% dans {mod_nom}",
+            explication=f"Taux total {mod.taux_total:.1f}% >= 50% dans {mod_nom}" if mod else "",
             genere_le=now,
         )
 
@@ -121,14 +156,13 @@ def _mock_decision(profil) -> DecisionIA:
         modules_avert = [m for m in profil.modules if m.statut_exam == "AVERTI"]
         mod = modules_avert[0] if modules_avert else None
         mod_nom = mod.module if mod else "Inconnu"
-        taux = f"{mod.taux_nj:.1f}" if mod else "??"
         return DecisionIA(
             doit_alerter=True,
             action=action,
             destinataire="etudiant",
             email_sujet=f"Avertissement absences — {mod_nom} — ESITH Casablanca",
             email_corps=_html_avertissement(profil.nom, profil.prenom, mod_nom, mod.taux_nj if mod else 0),
-            explication=f"Taux NJ {taux}% >= 20% dans {mod_nom}",
+            explication=f"Taux NJ {mod.taux_nj:.1f}% >= 20% dans {mod_nom}" if mod else "",
             genere_le=now,
         )
 
@@ -195,10 +229,11 @@ def analyser_et_rediger(profil) -> DecisionIA:
     return _mock_decision(profil)
 
 
-# ─── Traitement des alertes avec envoi email ─────────────────────────────────
+# ── Traitement des alertes ────────────────────────────────────────────────────
 
 def traiter_alertes(profils: list) -> list[dict]:
     emails_log = _load_emails_log()
+    db_conn = sqlite3.connect(DB_PATH) if DB_PATH.exists() else None
     results = []
 
     for profil in profils:
@@ -209,69 +244,73 @@ def traiter_alertes(profils: list) -> list[dict]:
         emails_sent = []
 
         for mod in profil.modules:
-            # Clé anti-doublon
+            id_module = getattr(mod, "id_module", 0)
+            alerte_id = _get_alerte_id(db_conn, profil.id_etudiant, id_module) if db_conn else None
+
             key_avert = f"{profil.id_etudiant}_{mod.module}_avert"
             key_exclu  = f"{profil.id_etudiant}_{mod.module}_exclu"
 
             if mod.statut_exam == "AVERTI" and key_avert not in emails_log:
-                html = _html_avertissement(profil.nom, profil.prenom, mod.module, mod.taux_nj)
+                html  = _html_avertissement(profil.nom, profil.prenom, mod.module, mod.taux_nj)
                 sujet = f"Avertissement absences — {mod.module} — ESITH Casablanca"
-                sent = send_email(profil.email, sujet, html)
+                sent  = send_email(profil.email, sujet, html)
                 if sent:
                     emails_log[key_avert] = {
                         "sent_at": datetime.now().strftime("%Y-%m-%d %H:%M"),
-                        "email": profil.email,
-                        "taux_nj": mod.taux_nj,
+                        "email": profil.email, "taux_nj": mod.taux_nj,
                     }
-                    emails_sent.append({"type": "avert", "module": mod.module, "sent": True})
-                else:
-                    emails_sent.append({"type": "avert", "module": mod.module, "sent": False})
+                    if db_conn:
+                        _log_email_to_db(db_conn, alerte_id, profil.email, sujet, "avert", True)
+                        if alerte_id:
+                            _update_alerte_flags(db_conn, alerte_id, "avert")
+                        db_conn.commit()
+                emails_sent.append({"type": "avert", "module": mod.module, "sent": sent})
 
-            elif mod.statut_exam == "AVERTI" and key_avert in emails_log:
+            elif mod.statut_exam == "AVERTI":
                 print(f"[traiter_alertes] Email déjà envoyé pour {profil.email} / {mod.module} (avert)")
 
             if mod.statut_exam == "EXCLU" and key_exclu not in emails_log:
-                html = _html_exclusion(profil.nom, profil.prenom, mod.module, mod.taux_total)
+                html  = _html_exclusion(profil.nom, profil.prenom, mod.module, mod.taux_total)
                 sujet = f"Exclusion d'examen — {mod.module} — ESITH Casablanca"
-                sent = send_email(profil.email, sujet, html)
+                sent  = send_email(profil.email, sujet, html)
                 if sent:
                     emails_log[key_exclu] = {
                         "sent_at": datetime.now().strftime("%Y-%m-%d %H:%M"),
-                        "email": profil.email,
-                        "taux_total": mod.taux_total,
+                        "email": profil.email, "taux_total": mod.taux_total,
                     }
-                    emails_sent.append({"type": "exclu", "module": mod.module, "sent": True})
-                else:
-                    emails_sent.append({"type": "exclu", "module": mod.module, "sent": False})
+                    if db_conn:
+                        _log_email_to_db(db_conn, alerte_id, profil.email, sujet, "exclu", True)
+                        if alerte_id:
+                            _update_alerte_flags(db_conn, alerte_id, "exclu")
+                        db_conn.commit()
+                emails_sent.append({"type": "exclu", "module": mod.module, "sent": sent})
 
-            elif mod.statut_exam == "EXCLU" and key_exclu in emails_log:
+            elif mod.statut_exam == "EXCLU":
                 print(f"[traiter_alertes] Email déjà envoyé pour {profil.email} / {mod.module} (exclu)")
 
         results.append({"profil": profil, "decision": decision, "emails_sent": emails_sent})
 
     _save_emails_log(emails_log)
+    if db_conn:
+        db_conn.close()
     return results
 
-
-# ─── Point d'entrée direct ───────────────────────────────────────────────────
 
 if __name__ == "__main__":
     import sys
     sys.path.insert(0, str(ROOT))
 
-    from backend.ingestion.reader import load_dataset
+    from backend.ingestion.reader import load_absences_df
     from backend.analysis.engine import calculer_profils
 
-    dataset_path = ROOT / "data" / "dataset.xlsx"
-    if not dataset_path.exists():
-        print(f"[ia_agent] dataset.xlsx introuvable dans {dataset_path}")
+    if not DB_PATH.exists():
+        print(f"[ia_agent] Base SQLite introuvable : {DB_PATH}")
         sys.exit(1)
 
-    print("[ia_agent] Chargement du dataset…")
-    df_abs, df_notes, df_etudiants, df_scoring = load_dataset(dataset_path)
-    profils = calculer_profils(df_abs, df_notes, df_etudiants, df_scoring)
+    print("[ia_agent] Chargement depuis SQLite…")
+    df_abs = load_absences_df()
+    profils = calculer_profils(df_abs)
 
-    # Filtrer les étudiants avec une action à effectuer (pas uniquement par score)
     en_alerte = [p for p in profils if p.action_recommandee != "AUCUNE"]
     print(f"[ia_agent] {len(en_alerte)} étudiant(s) nécessitent une action")
 
@@ -283,7 +322,4 @@ if __name__ == "__main__":
         print(f"  {p.prenom} {p.nom} ({p.email}) — {d.action}")
         for mod in p.modules:
             if mod.statut_exam != "AUTORISE":
-                print(f"    [{mod.statut_exam}] {mod.module} — NJ:{mod.nb_abs_nj}/{mod.total_seances} ({mod.taux_nj:.1f}%)")
-        for e in r.get("emails_sent", []):
-            status = "envoyé" if e["sent"] else "ECHEC"
-            print(f"    Email {e['type'].upper()} -> {status}")
+                print(f"    [{mod.statut_exam}] {mod.module} — NJ:{mod.nb_abs_nj} ({mod.taux_nj:.1f}%)")

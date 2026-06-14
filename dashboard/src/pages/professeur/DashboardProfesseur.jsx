@@ -35,7 +35,7 @@ function FilterBtn({ active, onClick, children }) {
   );
 }
 
-export default function DashboardProfesseur({ module: moduleProp, filiere: filiereProp, onLogout }) {
+export default function DashboardProfesseur({ module: moduleProp, semestre: semestreProp, filiere: filiereProp, onLogout }) {
   const [rows, setRows]       = useState([]);
   const [error, setError]     = useState(null);
   const [loading, setLoading] = useState(true);
@@ -52,7 +52,10 @@ export default function DashboardProfesseur({ module: moduleProp, filiere: filie
         if (liste.erreur) throw new Error();
         const filtered = [];
         for (const etudiant of liste) {
-          const modInfo = (etudiant.modules ?? []).find(m => m.module === moduleProp);
+          const modInfo = (etudiant.modules ?? []).find(m =>
+            m.module === moduleProp &&
+            (!semestreProp || semestreProp === "Tous" || m.semestre === semestreProp)
+          );
           if (modInfo) filtered.push({ etudiant, modInfo });
         }
         const ordre = { EXCLU: 0, AVERTI: 1, AUTORISE: 2 };
@@ -103,7 +106,10 @@ export default function DashboardProfesseur({ module: moduleProp, filiere: filie
           <img src="/logo-esith.png" alt="ESITH" style={{ height: 40, objectFit: "contain" }} onError={e => e.target.style.display = "none"} />
           <div>
             <div style={{ fontSize: 11, fontWeight: 600, letterSpacing: "0.1em", textTransform: "uppercase", color: "#8DC63F", marginBottom: 2 }}>Module</div>
-            <h1 style={{ fontSize: 20, fontWeight: 700, color: "#1a3a6b", margin: 0 }}>{moduleProp}</h1>
+            <h1 style={{ fontSize: 20, fontWeight: 700, color: "#1a3a6b", margin: 0 }}>
+              {moduleProp}
+              {semestreProp && semestreProp !== "Tous" && <span style={{ fontSize: 14, fontWeight: 500, color: "#64748b", marginLeft: 8 }}>· {semestreProp}</span>}
+            </h1>
             <p style={{ fontSize: 13, color: "#64748b", margin: "2px 0 0" }}>
               {rows.length} étudiant(s) dans ce module
               {filtreFiliere !== "Tous" && <span style={{ marginLeft: 6, color: "#1a3a6b", fontWeight: 600 }}>· {filtreFiliere}</span>}

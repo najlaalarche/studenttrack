@@ -121,7 +121,10 @@ export default function PageEtudiants({ onSelectEtudiant }) {
           </select>
           <select value={filtreModule} onChange={e => setFiltreModule(e.target.value)} style={selectStyle}>
             <option value="Tous">Tous les modules</option>
-            {modules.map(m => <option key={m} value={m}>{m}</option>)}
+            {modules.map(m => {
+              const nom = typeof m === "string" ? m : m.nom;
+              return <option key={nom} value={nom}>{nom}</option>;
+            })}
           </select>
         </div>
 

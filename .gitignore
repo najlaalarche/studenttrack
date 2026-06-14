@@ -14,6 +14,7 @@ data/dataset.xlsx
 data/.last_state.json
 data/*.xlsx
 data/*.csv
+data/studenttrack.db
 backend/data/passwords.json
 data/emails_log.json
 .env
