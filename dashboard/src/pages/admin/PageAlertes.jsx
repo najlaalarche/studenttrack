@@ -73,7 +73,10 @@ export default function PageAlertes() {
                 <div style={{ fontSize: 11, fontWeight: 600, letterSpacing: "0.08em", textTransform: "uppercase", color: "#64748b", marginBottom: 6 }}>Sujet</div>
                 <div style={{ fontSize: 13, fontWeight: 600, color: "#1e293b", marginBottom: 14 }}>{d.email_sujet || "—"}</div>
                 <div style={{ fontSize: 11, fontWeight: 600, letterSpacing: "0.08em", textTransform: "uppercase", color: "#64748b", marginBottom: 6 }}>Corps</div>
-                <pre style={{ fontSize: 12, whiteSpace: "pre-wrap", lineHeight: 1.65, color: "#475569", margin: 0, fontFamily: "inherit" }}>{d.email_corps || "—"}</pre>
+                <div
+                  style={{ fontSize: 13, lineHeight: 1.65, color: "#475569" }}
+                  dangerouslySetInnerHTML={{ __html: d.email_corps || "—" }}
+                />
               </div>
 
               <div style={{ fontSize: 11, color: "#94a3b8", fontStyle: "italic", marginBottom: 16 }}>

@@ -170,7 +170,19 @@ def calculer_profils(df_abs: pd.DataFrame) -> list[ProfilEtudiant]:
         else:
             score_global = 0.0
 
-        if score_global >= 70:
+        # Statut EXCLU force niveau_risque "critique" indépendamment du score
+        if nb_exclu > 0:
+            niveau_risque = "critique"
+            niveau_alerte = 3
+        elif nb_averti > 0:
+            # AVERTI : modéré minimum, critique si score >= 70
+            if score_global >= 70:
+                niveau_risque = "critique"
+                niveau_alerte = 3
+            else:
+                niveau_risque = "modéré"
+                niveau_alerte = 2
+        elif score_global >= 70:
             niveau_risque = "critique"
             niveau_alerte = 3
         elif score_global >= 40:
