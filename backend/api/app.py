@@ -5,6 +5,7 @@ import json
 import os
 import secrets
 import sqlite3
+import string
 import unicodedata
 from collections import defaultdict
 from datetime import datetime, timedelta
@@ -59,13 +60,24 @@ _init_password_resets()
 
 def _init_professeurs():
     conn = sqlite3.connect(DB_PATH)
+    tables = {r[0] for r in conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table'"
+    ).fetchall()}
+    if "professeurs" in tables:
+        cols = {r[1] for r in conn.execute("PRAGMA table_info(professeurs)").fetchall()}
+        if "password_hash" not in cols:
+            # Old schema without auth — drop and recreate
+            conn.execute("DROP TABLE IF EXISTS professeur_modules")
+            conn.execute("DROP TABLE IF EXISTS professeurs")
     conn.execute("""
         CREATE TABLE IF NOT EXISTS professeurs (
-            id         INTEGER PRIMARY KEY AUTOINCREMENT,
-            nom        TEXT NOT NULL,
-            prenom     TEXT NOT NULL,
-            email      TEXT UNIQUE,
-            created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            id            INTEGER PRIMARY KEY AUTOINCREMENT,
+            nom           TEXT NOT NULL,
+            prenom        TEXT NOT NULL,
+            email         TEXT UNIQUE NOT NULL,
+            password_hash TEXT NOT NULL,
+            created_at    DATETIME DEFAULT CURRENT_TIMESTAMP,
+            last_login    DATETIME
         )
     """)
     conn.execute("""
@@ -1146,38 +1158,35 @@ def alerts_history():
 
 # ── Routes — Gestion Professeurs ──────────────────────────────────────────────
 
-@app.route("/api/professeurs")
-def get_professeurs():
-    conn = _db()
-    profs = conn.execute(
-        "SELECT id, nom, prenom, email FROM professeurs ORDER BY nom, prenom"
-    ).fetchall()
-    result = []
-    for p in profs:
-        mods = conn.execute(
-            """SELECT m.id, m.nom, m.semestre, COALESCE(f.code,'') AS filiere
-               FROM professeur_modules pm
-               JOIN modules m ON pm.id_module = m.id
-               LEFT JOIN filieres f ON m.id_filiere = f.id
-               WHERE pm.id_professeur = ?
-               ORDER BY f.code, m.nom""",
-            (p["id"],),
-        ).fetchall()
-        result.append({
-            "id":      p["id"],
-            "nom":     p["nom"],
-            "prenom":  p["prenom"],
-            "email":   p["email"] or "",
-            "modules": [dict(m) for m in mods],
-        })
-    conn.close()
-    return jsonify(result)
+def _gen_mot_de_passe(longueur: int = 10) -> str:
+    chars = string.ascii_letters + string.digits
+    return "".join(secrets.choice(chars) for _ in range(longueur))
 
 
-@app.route("/api/professeurs/<int:prof_id>/modules")
-def get_professeur_modules(prof_id: int):
-    conn = _db()
-    mods = conn.execute(
+def _html_credentials(prenom: str, nom: str, email: str, mot_de_passe: str, reset: bool = False) -> str:
+    titre  = "Réinitialisation de mot de passe" if reset else "Bienvenue sur StudentTrack"
+    intro  = "Votre mot de passe StudentTrack a été réinitialisé." if reset else (
+        "Un compte StudentTrack a été créé pour vous."
+    )
+    return f"""
+<div style="font-family:Arial,sans-serif;max-width:560px;margin:0 auto">
+  <h2 style="color:#1a3a6b">{titre}</h2>
+  <p>Madame/Monsieur <strong>{prenom} {nom}</strong>,</p>
+  <p>{intro} Voici vos identifiants de connexion :</p>
+  <p style="background:#F8FAFC;border:1px solid #E2E8F0;border-radius:8px;padding:16px 20px;margin:20px 0">
+    <strong>Email :</strong> {email}<br>
+    <strong>Mot de passe :</strong> <code style="font-size:14px">{mot_de_passe}</code>
+  </p>
+  <p>Connectez-vous sur la plateforme en choisissant le rôle <strong>Professeur</strong>
+  et en saisissant ces identifiants.</p>
+  <p style="color:#64748b;font-size:12px">Nous vous recommandons de conserver ce mot de passe en lieu sûr.</p>
+  <hr style="border:none;border-top:1px solid #E2E8F0;margin:24px 0">
+  <p style="color:#94a3b8;font-size:11px">Service de la Scolarité — ESITH Casablanca — StudentTrack</p>
+</div>"""
+
+
+def _prof_modules(conn, prof_id: int) -> list:
+    return [dict(r) for r in conn.execute(
         """SELECT m.id, m.nom, m.semestre, COALESCE(f.code,'') AS filiere
            FROM professeur_modules pm
            JOIN modules m ON pm.id_module = m.id
@@ -1185,9 +1194,22 @@ def get_professeur_modules(prof_id: int):
            WHERE pm.id_professeur = ?
            ORDER BY f.code, m.nom""",
         (prof_id,),
+    ).fetchall()]
+
+
+@app.route("/api/professeurs")
+def get_professeurs():
+    conn = _db()
+    profs = conn.execute(
+        "SELECT id, nom, prenom, email FROM professeurs ORDER BY nom, prenom"
     ).fetchall()
+    result = [
+        {"id": p["id"], "nom": p["nom"], "prenom": p["prenom"],
+         "email": p["email"], "modules": _prof_modules(conn, p["id"])}
+        for p in profs
+    ]
     conn.close()
-    return jsonify([dict(m) for m in mods])
+    return jsonify(result)
 
 
 @app.route("/api/professeurs/ajouter", methods=["POST"])
@@ -1195,18 +1217,28 @@ def professeurs_ajouter():
     p          = request.get_json(silent=True) or {}
     nom        = (p.get("nom")    or "").strip()
     prenom     = (p.get("prenom") or "").strip()
-    email      = (p.get("email")  or "").strip() or None
     module_ids = [int(x) for x in (p.get("module_ids") or [])
                   if str(x).lstrip("-").isdigit()]
 
     if not nom or not prenom:
         return jsonify({"success": False, "error": "Nom et prénom requis"}), 400
 
-    conn = _db()
+    email = _gen_email(prenom, nom)
+    conn  = _db()
+
+    if conn.execute("SELECT id FROM professeurs WHERE email=?", (email,)).fetchone():
+        conn.close()
+        return jsonify({"success": False,
+                        "error": f"Un professeur avec l'email {email} existe déjà"}), 400
+
+    mdp     = _gen_mot_de_passe()
+    pw_hash = _hash_password(mdp)
+    now     = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
     try:
         cur     = conn.execute(
-            "INSERT INTO professeurs (nom, prenom, email) VALUES (?, ?, ?)",
-            (nom, prenom, email),
+            "INSERT INTO professeurs (nom, prenom, email, password_hash, created_at) VALUES (?, ?, ?, ?, ?)",
+            (nom, prenom, email, pw_hash, now),
         )
         prof_id = cur.lastrowid
         for mid in module_ids:
@@ -1218,8 +1250,24 @@ def professeurs_ajouter():
     except Exception as exc:
         conn.close()
         return jsonify({"success": False, "error": str(exc)}), 400
+
+    email_envoye = False
+    try:
+        _send_email(
+            email,
+            "Vos identifiants StudentTrack — ESITH Casablanca",
+            _html_credentials(prenom, nom, email, mdp),
+        )
+        email_envoye = True
+    except Exception:
+        pass
+
     conn.close()
-    return jsonify({"success": True, "id": prof_id})
+    return jsonify({
+        "success":      True,
+        "professeur":   {"id": prof_id, "nom": nom, "prenom": prenom, "email": email},
+        "email_envoye": email_envoye,
+    })
 
 
 @app.route("/api/professeurs/<int:prof_id>", methods=["PUT"])
@@ -1227,7 +1275,6 @@ def professeurs_update(prof_id: int):
     p          = request.get_json(silent=True) or {}
     nom        = (p.get("nom")    or "").strip()
     prenom     = (p.get("prenom") or "").strip()
-    email      = (p.get("email")  or "").strip() or None
     module_ids = [int(x) for x in (p.get("module_ids") or [])
                   if str(x).lstrip("-").isdigit()]
 
@@ -1236,11 +1283,12 @@ def professeurs_update(prof_id: int):
         conn.close()
         return jsonify({"success": False, "error": "Professeur non trouvé"}), 404
 
-    sets, vals = ["email=?"], [email]
+    sets, vals = [], []
     if nom:    sets.append("nom=?");    vals.append(nom)
     if prenom: sets.append("prenom=?"); vals.append(prenom)
-    vals.append(prof_id)
-    conn.execute(f"UPDATE professeurs SET {', '.join(sets)} WHERE id=?", vals)
+    if sets:
+        vals.append(prof_id)
+        conn.execute(f"UPDATE professeurs SET {', '.join(sets)} WHERE id=?", vals)
 
     conn.execute("DELETE FROM professeur_modules WHERE id_professeur=?", (prof_id,))
     for mid in module_ids:
@@ -1251,6 +1299,37 @@ def professeurs_update(prof_id: int):
     conn.commit()
     conn.close()
     return jsonify({"success": True})
+
+
+@app.route("/api/professeurs/<int:prof_id>/reset-password", methods=["POST"])
+def professeurs_reset_password(prof_id: int):
+    conn = _db()
+    prof = conn.execute(
+        "SELECT nom, prenom, email FROM professeurs WHERE id=?", (prof_id,)
+    ).fetchone()
+    if not prof:
+        conn.close()
+        return jsonify({"success": False, "error": "Professeur non trouvé"}), 404
+
+    mdp     = _gen_mot_de_passe()
+    pw_hash = _hash_password(mdp)
+    conn.execute("UPDATE professeurs SET password_hash=? WHERE id=?", (pw_hash, prof_id))
+    conn.commit()
+
+    nom, prenom, email = prof["nom"], prof["prenom"], prof["email"]
+    email_envoye = False
+    try:
+        _send_email(
+            email,
+            "Réinitialisation de mot de passe — StudentTrack",
+            _html_credentials(prenom, nom, email, mdp, reset=True),
+        )
+        email_envoye = True
+    except Exception:
+        pass
+
+    conn.close()
+    return jsonify({"success": True, "email_envoye": email_envoye})
 
 
 @app.route("/api/professeurs/<int:prof_id>", methods=["DELETE"])
@@ -1265,6 +1344,43 @@ def professeurs_delete(prof_id: int):
     conn.commit()
     conn.close()
     return jsonify({"success": True})
+
+
+@app.route("/api/auth/professeur-login", methods=["POST"])
+def auth_professeur_login():
+    payload  = request.get_json(silent=True) or {}
+    email    = (payload.get("email")    or "").strip().lower()
+    password = (payload.get("password") or "")
+
+    if not email or not password:
+        return jsonify({"success": False, "error": "Email et mot de passe requis"}), 400
+
+    conn = _db()
+    prof = conn.execute(
+        "SELECT id, nom, prenom, email, password_hash FROM professeurs WHERE LOWER(email)=?",
+        (email,),
+    ).fetchone()
+
+    if not prof or prof["password_hash"] != _hash_password(password):
+        conn.close()
+        return jsonify({"success": False, "error": "Email ou mot de passe incorrect"}), 401
+
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    conn.execute("UPDATE professeurs SET last_login=? WHERE id=?", (now, prof["id"]))
+    mods = _prof_modules(conn, prof["id"])
+    conn.commit()
+    conn.close()
+
+    return jsonify({
+        "success":    True,
+        "professeur": {
+            "id":      prof["id"],
+            "nom":     prof["nom"],
+            "prenom":  prof["prenom"],
+            "email":   prof["email"],
+            "modules": mods,
+        },
+    })
 
 
 if __name__ == "__main__":

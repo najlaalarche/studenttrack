@@ -76,9 +76,7 @@ export default function App() {
   if (session.role === "professeur") {
     return (
       <DashboardProfesseur
-        module={session.data.module}
-        semestre={session.data.semestre || "Tous"}
-        filiere={session.data.filiere || ""}
+        professeur={session.data}
         onLogout={handleLogout}
       />
     );

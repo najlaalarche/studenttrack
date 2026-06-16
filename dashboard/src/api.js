@@ -23,17 +23,5 @@ export const authAdminLogin    = (password) => _post("/api/auth/admin-login", { 
 export const authForgotPassword = (email) => _post("/api/auth/forgot-password", { email });
 export const authResetPassword  = (token, new_password) => _post("/api/auth/reset-password", { token, new_password });
 
-export const getProfesseurs        = () => fetch(`${BASE}/api/professeurs`).then(r => r.json());
-export const getProfesseurModules  = (id) => fetch(`${BASE}/api/professeurs/${id}/modules`).then(r => r.json());
-export const addProfesseur         = (data) => _post("/api/professeurs/ajouter", data);
-
-const _put = (url, body) =>
-  fetch(`${BASE}${url}`, {
-    method: "PUT",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  }).then(r => r.json());
-
-export const updateProfesseur = (id, data) => _put(`/api/professeurs/${id}`, data);
-export const deleteProfesseur = (id) =>
-  fetch(`${BASE}/api/professeurs/${id}`, { method: "DELETE" }).then(r => r.json());
+export const authProfesseurLogin = (email, password) =>
+  _post("/api/auth/professeur-login", { email, password });

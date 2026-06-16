@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { getProfesseurs, authCheckEmail, authRegister, authLogin, authAdminLogin, authForgotPassword } from "../api";
+import { authProfesseurLogin, authCheckEmail, authRegister, authLogin, authAdminLogin, authForgotPassword } from "../api";
 
 const GREEN = "#8DC63F";
 const GREEN_DARK = "#6fa52e";
@@ -101,15 +101,9 @@ export default function Login({ onLogin }) {
   const [forgotLoading, setForgotLoading]     = useState(false);
 
   // Professeur state
-  const [nom, setNom] = useState("");
-  const [module, setModule] = useState("");
-  const [semestre, setSemestre] = useState("Tous");
-  const [filiere, setFiliere] = useState("");
-  const [modules, setModules] = useState([]); // [{nom, filieres, semestres}] — filtered to professor
-  const [selectedModuleObj, setSelectedModuleObj] = useState(null);
-  const [loadingModules, setLoadingModules] = useState(false);
-  const [professeurs, setProfesseurs] = useState([]); // [{id, nom, prenom, modules:[]}]
-  const [selectedProfId, setSelectedProfId] = useState(null);
+  const [profEmail, setProfEmail]           = useState("");
+  const [profPassword, setProfPassword]     = useState("");
+  const [showProfPassword, setShowProfPassword] = useState(false);
 
   const [error, setError] = useState("");
 
@@ -123,21 +117,10 @@ export default function Login({ onLogin }) {
     setPrenom("");
     setFiliere("");
     setSemestre("Tous");
-    setSelectedModuleObj(null);
     if (selectedRole === "professeur") {
-      setLoadingModules(true);
-      setSelectedProfId(null);
-      setProfesseurs([]);
-      setModules([]);
-      setNom("");
-      setModule("");
-      try {
-        const data = await getProfesseurs();
-        setProfesseurs(Array.isArray(data) ? data : []);
-      } catch {
-        setProfesseurs([]);
-      }
-      setLoadingModules(false);
+      setProfEmail("");
+      setProfPassword("");
+      setShowProfPassword(false);
     }
     if (selectedRole === "administration") {
       setAdminPassword("");
@@ -211,39 +194,7 @@ export default function Login({ onLogin }) {
     setLoading(false);
   };
 
-  const handleProfesseurSelect = (profIdStr) => {
-    const id = parseInt(profIdStr) || null;
-    setSelectedProfId(id);
-    setModule("");
-    setSemestre("Tous");
-    setFiliere("");
-    setSelectedModuleObj(null);
-    const prof = professeurs.find(p => p.id === id);
-    if (!prof) { setNom(""); setModules([]); return; }
-    setNom(`${prof.prenom} ${prof.nom}`);
-    // Aggregate professor modules into {nom, filieres, semestres} format
-    const byNom = {};
-    for (const m of prof.modules || []) {
-      if (!byNom[m.nom]) byNom[m.nom] = { nom: m.nom, filieres: new Set(), semestres: new Set() };
-      if (m.filiere) byNom[m.nom].filieres.add(m.filiere);
-      if (m.semestre && m.semestre !== "S0") byNom[m.nom].semestres.add(m.semestre);
-    }
-    setModules(Object.values(byNom).map(m => ({
-      nom: m.nom,
-      filieres: [...m.filieres].sort(),
-      semestres: [...m.semestres].sort(),
-    })));
-  };
-
-  const handleModuleChange = (selectedNom) => {
-    setModule(selectedNom);
-    setSemestre("Tous");
-    setFiliere("");
-    const obj = modules.find(m => m.nom === selectedNom) || null;
-    setSelectedModuleObj(obj);
-  };
-
-  const handleAdminLogin = async () => {
+const handleAdminLogin = async () => {
     if (!adminPassword) { setError("Veuillez saisir le mot de passe"); return; }
     setError("");
     setLoading(true);
@@ -260,16 +211,22 @@ export default function Login({ onLogin }) {
     setLoading(false);
   };
 
-  const handleProfesseur = () => {
-    if (!selectedProfId) {
-      setError("Veuillez sélectionner un professeur dans la liste");
-      return;
+  const handleProfesseur = async () => {
+    if (!profEmail.includes("@")) { setError("Veuillez entrer un email valide"); return; }
+    if (!profPassword) { setError("Veuillez saisir votre mot de passe"); return; }
+    setError("");
+    setLoading(true);
+    try {
+      const res = await authProfesseurLogin(profEmail.trim().toLowerCase(), profPassword);
+      if (res.success) {
+        onLogin("professeur", res.professeur);
+      } else {
+        setError(res.error || "Email ou mot de passe incorrect");
+      }
+    } catch {
+      setError("Erreur de connexion au serveur");
     }
-    if (!module) {
-      setError("Veuillez sélectionner un module");
-      return;
-    }
-    onLogin("professeur", { nom, module, semestre, filiere, id_professeur: selectedProfId });
+    setLoading(false);
   };
 
   const handleForgotPassword = async () => {
@@ -577,115 +534,39 @@ export default function Login({ onLogin }) {
         {/* ---- PROFESSEUR ---- */}
         {role === "professeur" && (
           <div style={{ marginBottom: 16 }}>
-            {/* Sélection professeur */}
-            <label style={{ fontSize: 12, fontWeight: 600, color: "#374151", display: "block", marginBottom: 6 }}>
-              Professeur
-            </label>
-            {loadingModules ? (
-              <div style={{ fontSize: 12, color: "#94a3b8", marginBottom: 14 }}>Chargement…</div>
-            ) : professeurs.length === 0 ? (
-              <div style={{ fontSize: 12, color: "#dc2626", marginBottom: 14, padding: "8px 12px", background: "#fef2f2", borderRadius: 6, border: "1px solid #fecaca" }}>
-                Aucun professeur enregistré — contactez l'administration
-              </div>
-            ) : (
-              <select
-                value={selectedProfId || ""}
-                onChange={(e) => handleProfesseurSelect(e.target.value)}
-                style={{
-                  width: "100%", padding: "10px 14px", borderRadius: 8,
-                  border: "1.5px solid #cbd5e1", fontSize: 14, outline: "none",
-                  boxSizing: "border-box", color: selectedProfId ? "#1e293b" : "#94a3b8",
-                  background: "#fff", marginBottom: 14,
-                }}
-              >
-                <option value="">— Sélectionner un professeur —</option>
-                {professeurs.map((p) => (
-                  <option key={p.id} value={p.id}>{p.prenom} {p.nom}</option>
-                ))}
-              </select>
-            )}
-
-            {/* Module — affiché seulement après sélection du professeur */}
-            {selectedProfId && (
-              <>
-                <label style={{ fontSize: 12, fontWeight: 600, color: "#374151", display: "block", marginBottom: 6 }}>
-                  Module
-                </label>
-                {modules.length === 0 ? (
-                  <div style={{ fontSize: 12, color: "#94a3b8", marginBottom: 14 }}>
-                    Aucun module assigné à ce professeur
-                  </div>
-                ) : (
-                  <select
-                    value={module}
-                    onChange={(e) => handleModuleChange(e.target.value)}
-                    style={{
-                      width: "100%", padding: "10px 14px", borderRadius: 8,
-                      border: "1.5px solid #cbd5e1", fontSize: 14, outline: "none",
-                      boxSizing: "border-box", color: "#1e293b", background: "#fff", marginBottom: 14,
-                    }}
-                  >
-                    <option value="">Sélectionner un module</option>
-                    {modules.map((m) => (
-                      <option key={m.nom} value={m.nom}>{m.nom}</option>
-                    ))}
-                  </select>
-                )}
-
-                {/* Semestre + Filière */}
-                {module && (
-                  <>
-                    <label style={{ fontSize: 12, fontWeight: 600, color: "#374151", display: "block", marginBottom: 6 }}>
-                      Semestre
-                    </label>
-                    <select
-                      value={semestre}
-                      onChange={(e) => setSemestre(e.target.value)}
-                      style={{
-                        width: "100%", padding: "10px 14px", borderRadius: 8,
-                        border: "1.5px solid #cbd5e1", fontSize: 14, outline: "none",
-                        boxSizing: "border-box", color: "#1e293b", background: "#fff", marginBottom: 14,
-                      }}
-                    >
-                      <option value="Tous">Tous les semestres</option>
-                      {(selectedModuleObj?.semestres ?? []).map((s) => (
-                        <option key={s} value={s}>{s}</option>
-                      ))}
-                    </select>
-
-                    <label style={{ fontSize: 12, fontWeight: 600, color: "#374151", display: "block", marginBottom: 6 }}>
-                      Filière <span style={{ fontWeight: 400, color: "#94a3b8" }}>(optionnel)</span>
-                    </label>
-                    <select
-                      value={filiere}
-                      onChange={(e) => setFiliere(e.target.value)}
-                      style={{
-                        width: "100%", padding: "10px 14px", borderRadius: 8,
-                        border: "1.5px solid #cbd5e1", fontSize: 14, outline: "none",
-                        boxSizing: "border-box", color: "#1e293b", background: "#fff", marginBottom: 14,
-                      }}
-                    >
-                      <option value="">Toutes les filières</option>
-                      {(selectedModuleObj?.filieres ?? []).map((f) => (
-                        <option key={f} value={f}>{f}</option>
-                      ))}
-                    </select>
-                  </>
-                )}
-              </>
-            )}
-
-            {error && <div style={{ marginTop: 4 }}><ErrorBox msg={error} /></div>}
-            <div style={{ marginTop: 8 }}>
-              <button
-                onClick={handleProfesseur}
-                style={btnStyle(false)}
-                onMouseEnter={(e) => (e.target.style.background = GREEN_DARK)}
-                onMouseLeave={(e) => (e.target.style.background = GREEN)}
-              >
-                Se connecter →
-              </button>
+            <InputField
+              label="Email"
+              type="email"
+              placeholder="prenom.nom@esith.net"
+              value={profEmail}
+              onChange={(e) => setProfEmail(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && handleProfesseur()}
+            />
+            <InputField
+              label="Mot de passe"
+              type={showProfPassword ? "text" : "password"}
+              placeholder="Votre mot de passe"
+              value={profPassword}
+              onChange={(e) => setProfPassword(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && handleProfesseur()}
+              rightEl={
+                <span
+                  onClick={() => setShowProfPassword((v) => !v)}
+                  style={{ fontSize: 16, cursor: "pointer", color: "#94a3b8" }}
+                >
+                  {showProfPassword ? "👁" : "🙈"}
+                </span>
+              }
+            />
+            <div style={{ textAlign: "right", marginTop: -6, marginBottom: 14 }}>
+              <span style={{ fontSize: 12, color: "#64748b" }}>
+                Mot de passe oublié ? Contactez l'administration.
+              </span>
             </div>
+            {error && <ErrorBox msg={error} />}
+            <button onClick={handleProfesseur} disabled={loading} style={btnStyle(loading)}>
+              {loading ? "Connexion…" : "Se connecter →"}
+            </button>
           </div>
         )}
 

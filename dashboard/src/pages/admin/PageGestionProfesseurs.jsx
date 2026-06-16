@@ -17,12 +17,16 @@ const MSG_STYLE = {
   error:   { bg: "#fef2f2", border: "#fecaca", color: "#dc2626" },
 };
 
+function genEmail(prenom, nom) {
+  const clean = s =>
+    s.toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/\s+/g, "-").replace(/[^a-z0-9-]/g, "");
+  return prenom && nom ? `${clean(prenom)}.${clean(nom)}@esith.net` : "";
+}
+
 function ModuleSelector({ allModules, selectedIds, onToggle, search, onSearchChange }) {
   const q = search.toLowerCase();
   const filtered = q
-    ? allModules.filter(m =>
-        m.nom.toLowerCase().includes(q) || (m.filiere || "").toLowerCase().includes(q)
-      )
+    ? allModules.filter(m => m.nom.toLowerCase().includes(q) || (m.filiere || "").toLowerCase().includes(q))
     : allModules;
 
   const byFiliere = {};
@@ -44,35 +48,31 @@ function ModuleSelector({ allModules, selectedIds, onToggle, search, onSearchCha
       </div>
       <div style={{ overflowY: "auto", flex: 1 }}>
         {Object.keys(byFiliere).length === 0 ? (
-          <div style={{ padding: "16px 14px", fontSize: 12, color: "#94a3b8", textAlign: "center" }}>
-            Aucun module trouvé
-          </div>
+          <div style={{ padding: "16px 14px", fontSize: 12, color: "#94a3b8", textAlign: "center" }}>Aucun module trouvé</div>
         ) : (
-          Object.entries(byFiliere)
-            .sort(([a], [b]) => a.localeCompare(b))
-            .map(([filiere, mods]) => (
-              <div key={filiere}>
-                <div style={{ padding: "5px 12px", fontSize: 10, fontWeight: 700, color: "#64748b", textTransform: "uppercase", background: "#F8FAFC", letterSpacing: "0.06em", borderBottom: "1px solid #F1F5F9" }}>
-                  {filiere}
-                </div>
-                {mods.map(m => (
-                  <label key={m.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "5px 16px", cursor: "pointer", fontSize: 12, color: "#1e293b" }}
-                    onMouseEnter={e => e.currentTarget.style.background = "#F8FAFC"}
-                    onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
-                    <input
-                      type="checkbox"
-                      checked={selectedIds.has(m.id)}
-                      onChange={() => onToggle(m.id)}
-                      style={{ cursor: "pointer", accentColor: "#1a3a6b" }}
-                    />
-                    <span>{m.nom}</span>
-                    {m.semestre && m.semestre !== "S0" && (
-                      <span style={{ color: "#94a3b8", fontSize: 11 }}>{m.semestre}</span>
-                    )}
-                  </label>
-                ))}
+          Object.entries(byFiliere).sort(([a], [b]) => a.localeCompare(b)).map(([filiere, mods]) => (
+            <div key={filiere}>
+              <div style={{ padding: "5px 12px", fontSize: 10, fontWeight: 700, color: "#64748b", textTransform: "uppercase", background: "#F8FAFC", letterSpacing: "0.06em", borderBottom: "1px solid #F1F5F9" }}>
+                {filiere}
               </div>
-            ))
+              {mods.map(m => (
+                <label key={m.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "5px 16px", cursor: "pointer", fontSize: 12, color: "#1e293b" }}
+                  onMouseEnter={e => e.currentTarget.style.background = "#F8FAFC"}
+                  onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
+                  <input
+                    type="checkbox"
+                    checked={selectedIds.has(m.id)}
+                    onChange={() => onToggle(m.id)}
+                    style={{ cursor: "pointer", accentColor: "#1a3a6b" }}
+                  />
+                  <span>{m.nom}</span>
+                  {m.semestre && m.semestre !== "S0" && (
+                    <span style={{ color: "#94a3b8", fontSize: 11 }}>{m.semestre}</span>
+                  )}
+                </label>
+              ))}
+            </div>
+          ))
         )}
       </div>
     </div>
@@ -80,17 +80,18 @@ function ModuleSelector({ allModules, selectedIds, onToggle, search, onSearchCha
 }
 
 export default function PageGestionProfesseurs() {
-  const [allModules, setAllModules]         = useState([]);
-  const [form, setForm]                     = useState({ nom: "", prenom: "", email: "" });
+  const [allModules, setAllModules]               = useState([]);
+  const [form, setForm]                           = useState({ nom: "", prenom: "" });
   const [selectedModuleIds, setSelectedModuleIds] = useState(new Set());
-  const [moduleSearch, setModuleSearch]     = useState("");
-  const [editingId, setEditingId]           = useState(null);
-  const [expandedId, setExpandedId]         = useState(null);
-  const [msg, setMsg]                       = useState(null);
-  const [saving, setSaving]                 = useState(false);
-  const [liste, setListe]                   = useState([]);
-  const [search, setSearch]                 = useState("");
-  const [loading, setLoading]               = useState(true);
+  const [moduleSearch, setModuleSearch]           = useState("");
+  const [editingId, setEditingId]                 = useState(null);
+  const [expandedId, setExpandedId]               = useState(null);
+  const [msg, setMsg]                             = useState(null);
+  const [saving, setSaving]                       = useState(false);
+  const [resettingId, setResettingId]             = useState(null);
+  const [liste, setListe]                         = useState([]);
+  const [search, setSearch]                       = useState("");
+  const [loading, setLoading]                     = useState(true);
 
   useEffect(() => {
     fetch(`${BASE}/api/modules/all`)
@@ -113,18 +114,20 @@ export default function PageGestionProfesseurs() {
   const filteredListe = liste.filter(p =>
     !search ||
     `${p.prenom} ${p.nom}`.toLowerCase().includes(search.toLowerCase()) ||
-    (p.email || "").toLowerCase().includes(search.toLowerCase())
+    p.email.toLowerCase().includes(search.toLowerCase())
   );
 
+  const emailGenere = genEmail(form.prenom, form.nom);
+
   function resetForm() {
-    setForm({ nom: "", prenom: "", email: "" });
+    setForm({ nom: "", prenom: "" });
     setSelectedModuleIds(new Set());
     setModuleSearch("");
     setEditingId(null);
   }
 
   function handleEdit(prof) {
-    setForm({ nom: prof.nom, prenom: prof.prenom, email: prof.email || "" });
+    setForm({ nom: prof.nom, prenom: prof.prenom });
     setSelectedModuleIds(new Set(prof.modules.map(m => m.id)));
     setModuleSearch("");
     setEditingId(prof.id);
@@ -149,26 +152,26 @@ export default function PageGestionProfesseurs() {
     setSaving(true);
     setMsg(null);
     try {
-      const body = {
-        nom:        form.nom.trim(),
-        prenom:     form.prenom.trim(),
-        email:      form.email.trim() || null,
-        module_ids: [...selectedModuleIds],
-      };
+      const body   = { nom: form.nom.trim(), prenom: form.prenom.trim(), module_ids: [...selectedModuleIds] };
       const url    = editingId ? `${BASE}/api/professeurs/${editingId}` : `${BASE}/api/professeurs/ajouter`;
       const method = editingId ? "PUT" : "POST";
-      const res = await fetch(url, {
+      const res    = await fetch(url, {
         method,
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
       }).then(r => r.json());
 
       if (res.success) {
+        const extra = !editingId && res.email_envoye
+          ? ` — un email avec ses identifiants a été envoyé à ${res.professeur?.email}`
+          : !editingId && !res.email_envoye
+          ? ` — ⚠ Email non envoyé (vérifiez la configuration Brevo)`
+          : "";
         setMsg({
           type: "success",
           text: editingId
-            ? `✓ Professeur modifié avec succès.`
-            : `✓ Professeur ajouté : ${form.prenom} ${form.nom}`,
+            ? "✓ Professeur modifié avec succès."
+            : `✓ Professeur ajouté : ${form.prenom} ${form.nom}${extra}`,
         });
         resetForm();
         loadList();
@@ -179,6 +182,28 @@ export default function PageGestionProfesseurs() {
       setMsg({ type: "error", text: "Erreur de connexion au serveur." });
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function handleResetPassword(prof) {
+    if (!window.confirm(`Réinitialiser le mot de passe de ${prof.prenom} ${prof.nom} et envoyer un email ?`)) return;
+    setResettingId(prof.id);
+    try {
+      const res = await fetch(`${BASE}/api/professeurs/${prof.id}/reset-password`, { method: "POST" }).then(r => r.json());
+      if (res.success) {
+        setMsg({
+          type: "success",
+          text: res.email_envoye
+            ? `✓ Nouveau mot de passe envoyé à ${prof.email}`
+            : `✓ Mot de passe réinitialisé — ⚠ email non envoyé (vérifiez Brevo)`,
+        });
+      } else {
+        setMsg({ type: "error", text: res.error || "Erreur lors de la réinitialisation" });
+      }
+    } catch {
+      setMsg({ type: "error", text: "Erreur de connexion." });
+    } finally {
+      setResettingId(null);
     }
   }
 
@@ -198,8 +223,6 @@ export default function PageGestionProfesseurs() {
     }
   }
 
-  const selectedCount = selectedModuleIds.size;
-
   return (
     <div>
       <h2 style={{ fontSize: 18, fontWeight: 700, color: "#1a3a6b", marginBottom: 24 }}>Gestion des Professeurs</h2>
@@ -207,7 +230,7 @@ export default function PageGestionProfesseurs() {
       {/* Formulaire */}
       <div style={{ backgroundColor: "#FFFFFF", border: "1px solid #E2E8F0", borderRadius: 8, padding: 24, marginBottom: 28, boxShadow: "0 1px 3px rgba(0,0,0,0.08)", maxWidth: 560 }}>
         <h3 style={{ fontSize: 14, fontWeight: 700, color: "#1a3a6b", margin: "0 0 18px" }}>
-          {editingId ? `Modifier le professeur` : "Ajouter un professeur"}
+          {editingId ? "Modifier le professeur" : "Ajouter un professeur"}
         </h3>
 
         <form onSubmit={handleSubmit} style={{ display: "flex", flexDirection: "column", gap: 14 }}>
@@ -224,17 +247,26 @@ export default function PageGestionProfesseurs() {
             </div>
           </div>
 
-          <div>
-            <label style={LABEL}>Email <span style={{ fontWeight: 400, color: "#94a3b8" }}>(optionnel)</span></label>
-            <input style={INPUT} type="email" placeholder="ex: k.bennani@esith.ma" value={form.email}
-              onChange={e => setForm(f => ({ ...f, email: e.target.value }))} />
+          {/* Email auto-généré */}
+          <div style={{ backgroundColor: "#F8FAFC", border: "1px solid #E2E8F0", borderRadius: 6, padding: "10px 14px" }}>
+            <span style={{ fontSize: 11, fontWeight: 600, color: "#64748b" }}>Email généré (lecture seule) : </span>
+            <span style={{ fontSize: 13, fontWeight: 600, color: "#1a3a6b" }}>{emailGenere || "—"}</span>
           </div>
+
+          {/* Info mot de passe */}
+          {!editingId && (
+            <div style={{ backgroundColor: "#eff6ff", border: "1px solid #bfdbfe", borderRadius: 6, padding: "10px 14px", fontSize: 12, color: "#1d4ed8" }}>
+              ℹ Un mot de passe aléatoire sera généré automatiquement et envoyé par email au professeur.
+            </div>
+          )}
 
           <div>
             <label style={LABEL}>
-              Modules assignés
-              {selectedCount > 0 && (
-                <span style={{ marginLeft: 8, fontWeight: 700, color: "#1a3a6b" }}>({selectedCount} sélectionné{selectedCount > 1 ? "s" : ""})</span>
+              Modules enseignés
+              {selectedModuleIds.size > 0 && (
+                <span style={{ marginLeft: 8, fontWeight: 700, color: "#1a3a6b" }}>
+                  ({selectedModuleIds.size} sélectionné{selectedModuleIds.size > 1 ? "s" : ""})
+                </span>
               )}
             </label>
             {allModules.length === 0 ? (
@@ -281,7 +313,7 @@ export default function PageGestionProfesseurs() {
         )}
       </div>
 
-      {/* Tableau professeurs */}
+      {/* Tableau */}
       <div style={{ backgroundColor: "#FFFFFF", border: "1px solid #E2E8F0", borderRadius: 8, boxShadow: "0 1px 3px rgba(0,0,0,0.08)" }}>
         <div style={{ padding: "16px 20px", borderBottom: "1px solid #E2E8F0", display: "flex", alignItems: "center", gap: 12 }}>
           <h3 style={{ fontSize: 14, fontWeight: 700, color: "#1a3a6b", margin: 0 }}>Professeurs enregistrés</h3>
@@ -322,13 +354,13 @@ export default function PageGestionProfesseurs() {
                       <td style={S.td}>
                         <div style={{ fontWeight: 600 }}>{prof.prenom} {prof.nom}</div>
                       </td>
-                      <td style={{ ...S.td, color: "#64748b", fontSize: 12 }}>{prof.email || "—"}</td>
+                      <td style={{ ...S.td, fontSize: 12, color: "#64748b" }}>{prof.email}</td>
                       <td style={S.td}>
                         <button
                           onClick={() => setExpandedId(expandedId === prof.id ? null : prof.id)}
                           style={{
-                            padding: "3px 10px", borderRadius: 6, fontSize: 11, fontWeight: 600,
-                            cursor: "pointer", border: "1px solid #E2E8F0",
+                            padding: "3px 10px", borderRadius: 6, fontSize: 11, fontWeight: 600, cursor: "pointer",
+                            border: "1px solid #E2E8F0",
                             backgroundColor: expandedId === prof.id ? "#eef2fb" : "transparent",
                             color: "#1a3a6b",
                           }}
@@ -337,17 +369,19 @@ export default function PageGestionProfesseurs() {
                         </button>
                       </td>
                       <td style={S.td}>
-                        <div style={{ display: "flex", gap: 6 }}>
-                          <button
-                            onClick={() => handleEdit(prof)}
-                            style={{ padding: "4px 10px", borderRadius: 6, fontSize: 11, fontWeight: 600, cursor: "pointer", backgroundColor: "transparent", color: "#1a3a6b", border: "1px solid rgba(26,58,107,0.35)" }}
-                          >
+                        <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                          <button onClick={() => handleEdit(prof)}
+                            style={{ padding: "4px 10px", borderRadius: 6, fontSize: 11, fontWeight: 600, cursor: "pointer", backgroundColor: "transparent", color: "#1a3a6b", border: "1px solid rgba(26,58,107,0.35)" }}>
                             Modifier
                           </button>
                           <button
-                            onClick={() => handleDelete(prof)}
-                            style={{ padding: "4px 10px", borderRadius: 6, fontSize: 11, fontWeight: 600, cursor: "pointer", backgroundColor: "transparent", color: "#dc2626", border: "1px solid rgba(239,68,68,0.35)" }}
-                          >
+                            onClick={() => handleResetPassword(prof)}
+                            disabled={resettingId === prof.id}
+                            style={{ padding: "4px 10px", borderRadius: 6, fontSize: 11, fontWeight: 600, cursor: resettingId === prof.id ? "not-allowed" : "pointer", backgroundColor: "transparent", color: "#d97706", border: "1px solid rgba(217,119,6,0.35)" }}>
+                            {resettingId === prof.id ? "Envoi…" : "Réinit. mot de passe"}
+                          </button>
+                          <button onClick={() => handleDelete(prof)}
+                            style={{ padding: "4px 10px", borderRadius: 6, fontSize: 11, fontWeight: 600, cursor: "pointer", backgroundColor: "transparent", color: "#dc2626", border: "1px solid rgba(239,68,68,0.35)" }}>
                             Supprimer
                           </button>
                         </div>
