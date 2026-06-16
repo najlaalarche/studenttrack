@@ -16,7 +16,9 @@ const _post = (url, body) =>
     body: JSON.stringify(body),
   }).then(r => r.json());
 
-export const authCheckEmail  = (email) => _post("/api/auth/check-email", { email });
-export const authRegister    = (email, password) => _post("/api/auth/register", { email, password });
-export const authLogin       = (email, password) => _post("/api/auth/login", { email, password });
-export const authAdminLogin  = (password) => _post("/api/auth/admin-login", { password });
+export const authCheckEmail    = (email) => _post("/api/auth/check-email", { email });
+export const authRegister      = (email, password) => _post("/api/auth/register", { email, password });
+export const authLogin         = (email, password) => _post("/api/auth/login", { email, password });
+export const authAdminLogin    = (password) => _post("/api/auth/admin-login", { password });
+export const authForgotPassword = (email) => _post("/api/auth/forgot-password", { email });
+export const authResetPassword  = (token, new_password) => _post("/api/auth/reset-password", { token, new_password });

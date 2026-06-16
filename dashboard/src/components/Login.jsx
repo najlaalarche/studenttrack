@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { getModules, authCheckEmail, authRegister, authLogin, authAdminLogin } from "../api";
+import { getModules, authCheckEmail, authRegister, authLogin, authAdminLogin, authForgotPassword } from "../api";
 
 const GREEN = "#8DC63F";
 const GREEN_DARK = "#6fa52e";
@@ -93,6 +93,12 @@ export default function Login({ onLogin }) {
   // Administration state
   const [adminPassword, setAdminPassword] = useState("");
   const [showAdminPassword, setShowAdminPassword] = useState(false);
+
+  // Forgot-password state
+  const [forgotMode, setForgotMode]           = useState(false);
+  const [forgotEmail, setForgotEmail]         = useState("");
+  const [forgotSent, setForgotSent]           = useState(false);
+  const [forgotLoading, setForgotLoading]     = useState(false);
 
   // Professeur state
   const [nom, setNom] = useState("");
@@ -231,6 +237,20 @@ export default function Login({ onLogin }) {
     onLogin("professeur", { nom, module, semestre, filiere });
   };
 
+  const handleForgotPassword = async () => {
+    if (!forgotEmail.includes("@")) {
+      setError("Veuillez entrer un email valide");
+      return;
+    }
+    setForgotLoading(true);
+    setError("");
+    try {
+      await authForgotPassword(forgotEmail.trim().toLowerCase());
+    } catch { /* ignore — réponse générique côté serveur */ }
+    setForgotSent(true);
+    setForgotLoading(false);
+  };
+
   const EyeIcon = ({ visible }) => (
     <span
       onClick={() => {}}
@@ -353,7 +373,7 @@ export default function Login({ onLogin }) {
           </>
         )}
 
-        {role === "etudiant" && step === "2a" && (
+        {role === "etudiant" && step === "2a" && !forgotMode && (
           <>
             <div style={{ fontSize: 15, fontWeight: 600, color: "#1a2a4a", marginBottom: 16 }}>
               Bon retour {prenom ? prenom : ""} !
@@ -376,7 +396,7 @@ export default function Login({ onLogin }) {
             />
             <div style={{ textAlign: "right", marginTop: -8, marginBottom: 14 }}>
               <span
-                onClick={() => setError("Contactez l'administration pour réinitialiser votre mot de passe.")}
+                onClick={() => { setForgotMode(true); setForgotEmail(email); setForgotSent(false); setError(""); }}
                 style={{ fontSize: 12, color: GREEN_DARK, cursor: "pointer", textDecoration: "underline" }}
               >
                 Mot de passe oublié ?
@@ -387,6 +407,51 @@ export default function Login({ onLogin }) {
               {loading ? "Connexion..." : "Se connecter →"}
             </button>
             <BackLink onClick={() => { setStep(1); setError(""); setPassword(""); }} />
+          </>
+        )}
+
+        {role === "etudiant" && step === "2a" && forgotMode && (
+          <>
+            <div style={{ fontSize: 14, fontWeight: 700, color: "#1a2a4a", marginBottom: 4 }}>
+              Mot de passe oublié
+            </div>
+            {!forgotSent ? (
+              <>
+                <p style={{ fontSize: 12, color: "#64748b", marginBottom: 14 }}>
+                  Entrez votre adresse email ESITH. Vous recevrez un lien pour créer un nouveau mot de passe.
+                </p>
+                <InputField
+                  label="Email ESITH"
+                  type="email"
+                  placeholder="prenom.nom@esith.net"
+                  value={forgotEmail}
+                  onChange={(e) => setForgotEmail(e.target.value)}
+                  onKeyDown={(e) => e.key === "Enter" && handleForgotPassword()}
+                />
+                {error && <ErrorBox msg={error} />}
+                <button onClick={handleForgotPassword} disabled={forgotLoading} style={btnStyle(forgotLoading)}>
+                  {forgotLoading ? "Envoi..." : "Envoyer le lien →"}
+                </button>
+              </>
+            ) : (
+              <div style={{ backgroundColor: "#f0fdf4", border: "1px solid #86efac", borderRadius: 8, padding: "14px 16px", marginBottom: 16 }}>
+                <div style={{ fontSize: 13, color: "#166534", fontWeight: 600, marginBottom: 6 }}>
+                  Email envoyé
+                </div>
+                <div style={{ fontSize: 12, color: "#15803d", lineHeight: 1.6 }}>
+                  Si cet email existe dans notre système, un lien de réinitialisation a été envoyé.
+                  Vérifiez votre boîte mail (et le dossier spam).
+                </div>
+              </div>
+            )}
+            <div style={{ textAlign: "center", marginTop: 12 }}>
+              <span
+                onClick={() => { setForgotMode(false); setForgotSent(false); setError(""); }}
+                style={{ fontSize: 12, color: "#64748b", cursor: "pointer", textDecoration: "underline" }}
+              >
+                ← Retour à la connexion
+              </span>
+            </div>
           </>
         )}
 

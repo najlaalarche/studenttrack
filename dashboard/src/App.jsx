@@ -1,5 +1,6 @@
 import { useState } from "react";
 import Login from "./components/Login.jsx";
+import ResetPassword from "./pages/ResetPassword.jsx";
 import DashboardEtudiant from "./pages/etudiant/DashboardEtudiant.jsx";
 import DashboardProfesseur from "./pages/professeur/DashboardProfesseur.jsx";
 import DashboardAdmin from "./pages/admin/DashboardAdmin.jsx";
@@ -24,19 +25,25 @@ function writeSession(role, data, page_admin) {
   localStorage.setItem(SESSION_KEY, JSON.stringify(payload));
 }
 
-export default function App() {
-  const stored = readStoredSession();
+// Détection route /reset-password?token=xxx (sans react-router)
+function getResetToken() {
+  if (window.location.pathname === "/reset-password") {
+    return new URLSearchParams(window.location.search).get("token") || "";
+  }
+  return null;
+}
 
-  const [session, setSession] = useState(
-    stored ? { role: stored.role, data: stored.data || {} } : null
-  );
+export default function App() {
+  const resetToken = getResetToken(); // null = pas sur cette route, "" = route sans token
+
+  const stored = readStoredSession();
+  const [session, setSession]   = useState(stored ? { role: stored.role, data: stored.data || {} } : null);
   const [adminPage, setAdminPage] = useState(stored?.page_admin || "overview");
 
   function handleLogin(role, data) {
-    const page = "overview";
     setSession({ role, data });
-    setAdminPage(page);
-    writeSession(role, data, page);
+    setAdminPage("overview");
+    writeSession(role, data, "overview");
   }
 
   function handleLogout() {
@@ -47,6 +54,17 @@ export default function App() {
   function handleAdminPageChange(page) {
     setAdminPage(page);
     writeSession("administration", {}, page);
+  }
+
+  function goToLogin() {
+    // Nettoyer l'URL et revenir à la page de connexion
+    window.history.replaceState(null, "", "/");
+    window.location.reload();
+  }
+
+  // Route /reset-password
+  if (resetToken !== null) {
+    return <ResetPassword token={resetToken} onBackToLogin={goToLogin} />;
   }
 
   if (!session) return <Login onLogin={handleLogin} />;

@@ -3,10 +3,11 @@ import hashlib
 import io
 import json
 import os
+import secrets
 import sqlite3
 import unicodedata
 from collections import defaultdict
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 import numpy as np
@@ -28,12 +29,32 @@ from backend.agent.ia_agent import (
     traiter_alertes, envoyer_alerte_auto,
     _html_avertissement as html_avertissement,
     _html_exclusion     as html_exclusion,
+    send_email          as _send_email,
 )
 from backend.agent.email_agent import init_alerts_db, process_student_alerts, get_alert_history
 
 app = Flask(__name__)
 CORS(app)
 init_alerts_db()
+
+# Création de la table password_resets si elle n'existe pas
+def _init_password_resets():
+    conn = sqlite3.connect(DB_PATH)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS password_resets (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            id_etudiant INTEGER NOT NULL,
+            token       TEXT    UNIQUE NOT NULL,
+            expires_at  DATETIME NOT NULL,
+            used        BOOLEAN DEFAULT 0,
+            created_at  DATETIME DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (id_etudiant) REFERENCES etudiants(id)
+        )
+    """)
+    conn.commit()
+    conn.close()
+
+_init_password_resets()
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
@@ -920,6 +941,153 @@ def auth_admin_login():
     if password == admin_pw:
         return jsonify({"success": True})
     return jsonify({"success": False, "error": "Mot de passe incorrect"}), 401
+
+
+# ── Password reset helpers ────────────────────────────────────────────────────
+
+def _get_etudiant_by_email(email: str):
+    conn = _db()
+    row = conn.execute(
+        "SELECT id, nom, prenom, email FROM etudiants WHERE LOWER(email)=?",
+        (email.lower().strip(),),
+    ).fetchone()
+    conn.close()
+    return row
+
+
+def _save_reset_token(id_etudiant: int, token: str, expires_at: str):
+    conn = _db()
+    # Invalider les anciens tokens non utilisés pour cet étudiant
+    conn.execute(
+        "UPDATE password_resets SET used=1 WHERE id_etudiant=? AND used=0",
+        (id_etudiant,),
+    )
+    conn.execute(
+        "INSERT INTO password_resets (id_etudiant, token, expires_at) VALUES (?, ?, ?)",
+        (id_etudiant, token, expires_at),
+    )
+    conn.commit()
+    conn.close()
+
+
+def _get_valid_reset_token(token: str):
+    conn = _db()
+    row = conn.execute(
+        "SELECT id, id_etudiant FROM password_resets"
+        " WHERE token=? AND used=0 AND expires_at > datetime('now')",
+        (token,),
+    ).fetchone()
+    conn.close()
+    return row
+
+
+def _mark_token_used(token: str):
+    conn = _db()
+    conn.execute("UPDATE password_resets SET used=1 WHERE token=?", (token,))
+    conn.commit()
+    conn.close()
+
+
+def _update_user_password(id_etudiant: int, password_hash: str):
+    conn = _db()
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    existing = conn.execute(
+        "SELECT id FROM users WHERE id_etudiant=?", (id_etudiant,)
+    ).fetchone()
+    if existing:
+        conn.execute(
+            "UPDATE users SET password_hash=? WHERE id_etudiant=?",
+            (password_hash, id_etudiant),
+        )
+    else:
+        et = conn.execute(
+            "SELECT email FROM etudiants WHERE id=?", (id_etudiant,)
+        ).fetchone()
+        conn.execute(
+            "INSERT INTO users (id_etudiant, email, password_hash, created_at)"
+            " VALUES (?, ?, ?, ?)",
+            (id_etudiant, et["email"] if et else "", password_hash, now),
+        )
+    conn.commit()
+    conn.close()
+
+
+@app.route("/api/auth/forgot-password", methods=["POST"])
+def forgot_password():
+    payload = request.get_json(silent=True) or {}
+    email   = (payload.get("email") or "").strip().lower()
+    generic = {"success": True, "message": "Si cet email existe, un lien a été envoyé."}
+
+    if not email:
+        return jsonify(generic)
+
+    etudiant = _get_etudiant_by_email(email)
+    if not etudiant:
+        return jsonify(generic)
+
+    token      = secrets.token_urlsafe(32)
+    expires_at = (datetime.now() + timedelta(hours=1)).strftime("%Y-%m-%d %H:%M:%S")
+    _save_reset_token(etudiant["id"], token, expires_at)
+
+    reset_link = f"http://localhost:5173/reset-password?token={token}"
+    html_body  = f"""
+    <div style="font-family:Arial,sans-serif;max-width:560px;margin:0 auto">
+      <h2 style="color:#1a3a6b">Réinitialisation de mot de passe — StudentTrack</h2>
+      <p>Madame/Monsieur <strong>{etudiant['prenom']} {etudiant['nom']}</strong>,</p>
+      <p>Vous avez demandé la réinitialisation de votre mot de passe StudentTrack.</p>
+      <p>Cliquez sur le bouton ci-dessous pour créer un nouveau mot de passe
+         (lien valide <strong>1 heure</strong>) :</p>
+      <p style="margin:24px 0">
+        <a href="{reset_link}"
+           style="background:#8DC63F;color:#fff;padding:12px 24px;
+                  text-decoration:none;border-radius:6px;display:inline-block;
+                  font-weight:700">
+          Réinitialiser mon mot de passe
+        </a>
+      </p>
+      <p style="color:#64748b;font-size:12px">
+        Si vous n'avez pas demandé cette réinitialisation, ignorez cet email.
+        Votre mot de passe actuel reste inchangé.
+      </p>
+      <hr style="border:none;border-top:1px solid #e2e8f0;margin:24px 0">
+      <p style="color:#94a3b8;font-size:11px">
+        Service de la Scolarité — ESITH Casablanca — StudentTrack
+      </p>
+    </div>
+    """
+    _send_email(
+        etudiant["email"],
+        "Réinitialisation de mot de passe — StudentTrack",
+        html_body,
+    )
+    return jsonify(generic)
+
+
+@app.route("/api/auth/reset-password", methods=["POST"])
+def reset_password_route():
+    payload      = request.get_json(silent=True) or {}
+    token        = (payload.get("token")        or "").strip()
+    new_password = (payload.get("new_password") or "")
+
+    if not token:
+        return jsonify({"success": False, "error": "Token manquant"}), 400
+
+    reset_entry = _get_valid_reset_token(token)
+    if not reset_entry:
+        return jsonify({
+            "success": False,
+            "error": "Lien invalide ou expiré. Demandez un nouveau lien.",
+        }), 400
+
+    if len(new_password) < 8:
+        return jsonify({
+            "success": False,
+            "error": "Le mot de passe doit contenir au moins 8 caractères.",
+        }), 400
+
+    _update_user_password(reset_entry["id_etudiant"], _hash_password(new_password))
+    _mark_token_used(token)
+    return jsonify({"success": True, "message": "Mot de passe réinitialisé avec succès."})
 
 
 # ── Routes — Sync ─────────────────────────────────────────────────────────────
