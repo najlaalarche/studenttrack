@@ -165,11 +165,15 @@ function PageSync() {
   );
 }
 
-export default function DashboardAdmin({ onLogout }) {
-  const [page, setPage]         = useState("overview");
+export default function DashboardAdmin({ onLogout, initialPage = "overview", onPageChange }) {
+  const [page, setPage]         = useState(initialPage);
   const [selected, setSelected] = useState(null);
 
-  function handleNav(key) { setPage(key); setSelected(null); }
+  function handleNav(key) {
+    setPage(key);
+    setSelected(null);
+    onPageChange?.(key);
+  }
 
   return (
     <div style={{ minHeight: "100vh", backgroundColor: "#FFFFFF" }}>
