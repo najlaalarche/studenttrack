@@ -57,6 +57,33 @@ def _init_password_resets():
 _init_password_resets()
 
 
+def _init_professeurs():
+    conn = sqlite3.connect(DB_PATH)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS professeurs (
+            id         INTEGER PRIMARY KEY AUTOINCREMENT,
+            nom        TEXT NOT NULL,
+            prenom     TEXT NOT NULL,
+            email      TEXT UNIQUE,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS professeur_modules (
+            id            INTEGER PRIMARY KEY AUTOINCREMENT,
+            id_professeur INTEGER NOT NULL,
+            id_module     INTEGER NOT NULL,
+            FOREIGN KEY (id_professeur) REFERENCES professeurs(id),
+            FOREIGN KEY (id_module)     REFERENCES modules(id),
+            UNIQUE(id_professeur, id_module)
+        )
+    """)
+    conn.commit()
+    conn.close()
+
+_init_professeurs()
+
+
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
 def _db():
@@ -1115,6 +1142,129 @@ def sync():
 def alerts_history():
     student_id = request.args.get("student_id")
     return jsonify({"alerts": get_alert_history(student_id)})
+
+
+# ── Routes — Gestion Professeurs ──────────────────────────────────────────────
+
+@app.route("/api/professeurs")
+def get_professeurs():
+    conn = _db()
+    profs = conn.execute(
+        "SELECT id, nom, prenom, email FROM professeurs ORDER BY nom, prenom"
+    ).fetchall()
+    result = []
+    for p in profs:
+        mods = conn.execute(
+            """SELECT m.id, m.nom, m.semestre, COALESCE(f.code,'') AS filiere
+               FROM professeur_modules pm
+               JOIN modules m ON pm.id_module = m.id
+               LEFT JOIN filieres f ON m.id_filiere = f.id
+               WHERE pm.id_professeur = ?
+               ORDER BY f.code, m.nom""",
+            (p["id"],),
+        ).fetchall()
+        result.append({
+            "id":      p["id"],
+            "nom":     p["nom"],
+            "prenom":  p["prenom"],
+            "email":   p["email"] or "",
+            "modules": [dict(m) for m in mods],
+        })
+    conn.close()
+    return jsonify(result)
+
+
+@app.route("/api/professeurs/<int:prof_id>/modules")
+def get_professeur_modules(prof_id: int):
+    conn = _db()
+    mods = conn.execute(
+        """SELECT m.id, m.nom, m.semestre, COALESCE(f.code,'') AS filiere
+           FROM professeur_modules pm
+           JOIN modules m ON pm.id_module = m.id
+           LEFT JOIN filieres f ON m.id_filiere = f.id
+           WHERE pm.id_professeur = ?
+           ORDER BY f.code, m.nom""",
+        (prof_id,),
+    ).fetchall()
+    conn.close()
+    return jsonify([dict(m) for m in mods])
+
+
+@app.route("/api/professeurs/ajouter", methods=["POST"])
+def professeurs_ajouter():
+    p          = request.get_json(silent=True) or {}
+    nom        = (p.get("nom")    or "").strip()
+    prenom     = (p.get("prenom") or "").strip()
+    email      = (p.get("email")  or "").strip() or None
+    module_ids = [int(x) for x in (p.get("module_ids") or [])
+                  if str(x).lstrip("-").isdigit()]
+
+    if not nom or not prenom:
+        return jsonify({"success": False, "error": "Nom et prénom requis"}), 400
+
+    conn = _db()
+    try:
+        cur     = conn.execute(
+            "INSERT INTO professeurs (nom, prenom, email) VALUES (?, ?, ?)",
+            (nom, prenom, email),
+        )
+        prof_id = cur.lastrowid
+        for mid in module_ids:
+            conn.execute(
+                "INSERT OR IGNORE INTO professeur_modules (id_professeur, id_module) VALUES (?, ?)",
+                (prof_id, mid),
+            )
+        conn.commit()
+    except Exception as exc:
+        conn.close()
+        return jsonify({"success": False, "error": str(exc)}), 400
+    conn.close()
+    return jsonify({"success": True, "id": prof_id})
+
+
+@app.route("/api/professeurs/<int:prof_id>", methods=["PUT"])
+def professeurs_update(prof_id: int):
+    p          = request.get_json(silent=True) or {}
+    nom        = (p.get("nom")    or "").strip()
+    prenom     = (p.get("prenom") or "").strip()
+    email      = (p.get("email")  or "").strip() or None
+    module_ids = [int(x) for x in (p.get("module_ids") or [])
+                  if str(x).lstrip("-").isdigit()]
+
+    conn = _db()
+    if not conn.execute("SELECT id FROM professeurs WHERE id=?", (prof_id,)).fetchone():
+        conn.close()
+        return jsonify({"success": False, "error": "Professeur non trouvé"}), 404
+
+    sets, vals = ["email=?"], [email]
+    if nom:    sets.append("nom=?");    vals.append(nom)
+    if prenom: sets.append("prenom=?"); vals.append(prenom)
+    vals.append(prof_id)
+    conn.execute(f"UPDATE professeurs SET {', '.join(sets)} WHERE id=?", vals)
+
+    conn.execute("DELETE FROM professeur_modules WHERE id_professeur=?", (prof_id,))
+    for mid in module_ids:
+        conn.execute(
+            "INSERT OR IGNORE INTO professeur_modules (id_professeur, id_module) VALUES (?, ?)",
+            (prof_id, mid),
+        )
+    conn.commit()
+    conn.close()
+    return jsonify({"success": True})
+
+
+@app.route("/api/professeurs/<int:prof_id>", methods=["DELETE"])
+def professeurs_delete(prof_id: int):
+    conn = _db()
+    if not conn.execute("SELECT id FROM professeurs WHERE id=?", (prof_id,)).fetchone():
+        conn.close()
+        return jsonify({"success": False, "error": "Professeur non trouvé"}), 404
+
+    conn.execute("DELETE FROM professeur_modules WHERE id_professeur=?", (prof_id,))
+    conn.execute("DELETE FROM professeurs WHERE id=?", (prof_id,))
+    conn.commit()
+    conn.close()
+    return jsonify({"success": True})
 
 
 if __name__ == "__main__":

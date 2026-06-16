@@ -7,6 +7,7 @@ import PageAlertes from "./PageAlertes.jsx";
 import PageDetailEtudiant from "./PageDetailEtudiant.jsx";
 import PageImportation from "./PageImportation.jsx";
 import PageGestionEtudiants from "./PageGestionEtudiants.jsx";
+import PageGestionProfesseurs from "./PageGestionProfesseurs.jsx";
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell,
   PieChart, Pie, Legend,
@@ -183,8 +184,9 @@ export default function DashboardAdmin({ onLogout, initialPage = "overview", onP
         {page === "etudiants"         && !selected && <PageEtudiants onSelectEtudiant={id => setSelected(id)} />}
         {page === "alertes"           && !selected && <PageAlertes />}
         {page === "importation"       && !selected && <PageImportation />}
-        {page === "gestion-etudiants" && !selected && <PageGestionEtudiants />}
-        {page === "sync"              && !selected && <PageSync />}
+        {page === "gestion-etudiants"    && !selected && <PageGestionEtudiants />}
+        {page === "gestion-professeurs"  && !selected && <PageGestionProfesseurs />}
+        {page === "sync"                 && !selected && <PageSync />}
         {selected && <PageDetailEtudiant id_etudiant={selected} onBack={() => { setSelected(null); setPage("etudiants"); }} />}
       </main>
     </div>

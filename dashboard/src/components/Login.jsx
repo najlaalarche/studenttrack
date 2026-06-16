@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { getModules, authCheckEmail, authRegister, authLogin, authAdminLogin, authForgotPassword } from "../api";
+import { getProfesseurs, authCheckEmail, authRegister, authLogin, authAdminLogin, authForgotPassword } from "../api";
 
 const GREEN = "#8DC63F";
 const GREEN_DARK = "#6fa52e";
@@ -105,9 +105,11 @@ export default function Login({ onLogin }) {
   const [module, setModule] = useState("");
   const [semestre, setSemestre] = useState("Tous");
   const [filiere, setFiliere] = useState("");
-  const [modules, setModules] = useState([]); // [{nom, filieres, semestres}]
+  const [modules, setModules] = useState([]); // [{nom, filieres, semestres}] — filtered to professor
   const [selectedModuleObj, setSelectedModuleObj] = useState(null);
   const [loadingModules, setLoadingModules] = useState(false);
+  const [professeurs, setProfesseurs] = useState([]); // [{id, nom, prenom, modules:[]}]
+  const [selectedProfId, setSelectedProfId] = useState(null);
 
   const [error, setError] = useState("");
 
@@ -124,11 +126,16 @@ export default function Login({ onLogin }) {
     setSelectedModuleObj(null);
     if (selectedRole === "professeur") {
       setLoadingModules(true);
+      setSelectedProfId(null);
+      setProfesseurs([]);
+      setModules([]);
+      setNom("");
+      setModule("");
       try {
-        const data = await getModules();
-        setModules(data);
+        const data = await getProfesseurs();
+        setProfesseurs(Array.isArray(data) ? data : []);
       } catch {
-        setModules([]);
+        setProfesseurs([]);
       }
       setLoadingModules(false);
     }
@@ -204,6 +211,30 @@ export default function Login({ onLogin }) {
     setLoading(false);
   };
 
+  const handleProfesseurSelect = (profIdStr) => {
+    const id = parseInt(profIdStr) || null;
+    setSelectedProfId(id);
+    setModule("");
+    setSemestre("Tous");
+    setFiliere("");
+    setSelectedModuleObj(null);
+    const prof = professeurs.find(p => p.id === id);
+    if (!prof) { setNom(""); setModules([]); return; }
+    setNom(`${prof.prenom} ${prof.nom}`);
+    // Aggregate professor modules into {nom, filieres, semestres} format
+    const byNom = {};
+    for (const m of prof.modules || []) {
+      if (!byNom[m.nom]) byNom[m.nom] = { nom: m.nom, filieres: new Set(), semestres: new Set() };
+      if (m.filiere) byNom[m.nom].filieres.add(m.filiere);
+      if (m.semestre && m.semestre !== "S0") byNom[m.nom].semestres.add(m.semestre);
+    }
+    setModules(Object.values(byNom).map(m => ({
+      nom: m.nom,
+      filieres: [...m.filieres].sort(),
+      semestres: [...m.semestres].sort(),
+    })));
+  };
+
   const handleModuleChange = (selectedNom) => {
     setModule(selectedNom);
     setSemestre("Tous");
@@ -230,11 +261,15 @@ export default function Login({ onLogin }) {
   };
 
   const handleProfesseur = () => {
-    if (!nom.trim() || !module) {
-      setError("Veuillez renseigner votre nom et sélectionner un module");
+    if (!selectedProfId) {
+      setError("Veuillez sélectionner un professeur dans la liste");
       return;
     }
-    onLogin("professeur", { nom, module, semestre, filiere });
+    if (!module) {
+      setError("Veuillez sélectionner un module");
+      return;
+    }
+    onLogin("professeur", { nom, module, semestre, filiere, id_professeur: selectedProfId });
   };
 
   const handleForgotPassword = async () => {
@@ -542,76 +577,101 @@ export default function Login({ onLogin }) {
         {/* ---- PROFESSEUR ---- */}
         {role === "professeur" && (
           <div style={{ marginBottom: 16 }}>
-            <InputField
-              label="Votre nom"
-              type="text"
-              placeholder="Nom et prénom"
-              value={nom}
-              onChange={(e) => setNom(e.target.value)}
-            />
-
-            {/* Module */}
+            {/* Sélection professeur */}
             <label style={{ fontSize: 12, fontWeight: 600, color: "#374151", display: "block", marginBottom: 6 }}>
-              Module
+              Professeur
             </label>
             {loadingModules ? (
-              <div style={{ fontSize: 12, color: "#94a3b8", marginBottom: 14 }}>Chargement des modules...</div>
+              <div style={{ fontSize: 12, color: "#94a3b8", marginBottom: 14 }}>Chargement…</div>
+            ) : professeurs.length === 0 ? (
+              <div style={{ fontSize: 12, color: "#dc2626", marginBottom: 14, padding: "8px 12px", background: "#fef2f2", borderRadius: 6, border: "1px solid #fecaca" }}>
+                Aucun professeur enregistré — contactez l'administration
+              </div>
             ) : (
               <select
-                value={module}
-                onChange={(e) => handleModuleChange(e.target.value)}
+                value={selectedProfId || ""}
+                onChange={(e) => handleProfesseurSelect(e.target.value)}
                 style={{
                   width: "100%", padding: "10px 14px", borderRadius: 8,
                   border: "1.5px solid #cbd5e1", fontSize: 14, outline: "none",
-                  boxSizing: "border-box", color: "#1e293b", background: "#fff", marginBottom: 14,
+                  boxSizing: "border-box", color: selectedProfId ? "#1e293b" : "#94a3b8",
+                  background: "#fff", marginBottom: 14,
                 }}
               >
-                <option value="">Sélectionner un module</option>
-                {modules.map((m) => (
-                  <option key={m.nom} value={m.nom}>{m.nom}</option>
+                <option value="">— Sélectionner un professeur —</option>
+                {professeurs.map((p) => (
+                  <option key={p.id} value={p.id}>{p.prenom} {p.nom}</option>
                 ))}
               </select>
             )}
 
-            {/* Semestre */}
-            {module && (
+            {/* Module — affiché seulement après sélection du professeur */}
+            {selectedProfId && (
               <>
                 <label style={{ fontSize: 12, fontWeight: 600, color: "#374151", display: "block", marginBottom: 6 }}>
-                  Semestre
+                  Module
                 </label>
-                <select
-                  value={semestre}
-                  onChange={(e) => setSemestre(e.target.value)}
-                  style={{
-                    width: "100%", padding: "10px 14px", borderRadius: 8,
-                    border: "1.5px solid #cbd5e1", fontSize: 14, outline: "none",
-                    boxSizing: "border-box", color: "#1e293b", background: "#fff", marginBottom: 14,
-                  }}
-                >
-                  <option value="Tous">Tous les semestres</option>
-                  {(selectedModuleObj?.semestres ?? []).map((s) => (
-                    <option key={s} value={s}>{s}</option>
-                  ))}
-                </select>
+                {modules.length === 0 ? (
+                  <div style={{ fontSize: 12, color: "#94a3b8", marginBottom: 14 }}>
+                    Aucun module assigné à ce professeur
+                  </div>
+                ) : (
+                  <select
+                    value={module}
+                    onChange={(e) => handleModuleChange(e.target.value)}
+                    style={{
+                      width: "100%", padding: "10px 14px", borderRadius: 8,
+                      border: "1.5px solid #cbd5e1", fontSize: 14, outline: "none",
+                      boxSizing: "border-box", color: "#1e293b", background: "#fff", marginBottom: 14,
+                    }}
+                  >
+                    <option value="">Sélectionner un module</option>
+                    {modules.map((m) => (
+                      <option key={m.nom} value={m.nom}>{m.nom}</option>
+                    ))}
+                  </select>
+                )}
 
-                {/* Filière */}
-                <label style={{ fontSize: 12, fontWeight: 600, color: "#374151", display: "block", marginBottom: 6 }}>
-                  Filière <span style={{ fontWeight: 400, color: "#94a3b8" }}>(optionnel)</span>
-                </label>
-                <select
-                  value={filiere}
-                  onChange={(e) => setFiliere(e.target.value)}
-                  style={{
-                    width: "100%", padding: "10px 14px", borderRadius: 8,
-                    border: "1.5px solid #cbd5e1", fontSize: 14, outline: "none",
-                    boxSizing: "border-box", color: "#1e293b", background: "#fff", marginBottom: 14,
-                  }}
-                >
-                  <option value="">Toutes les filières</option>
-                  {(selectedModuleObj?.filieres ?? []).map((f) => (
-                    <option key={f} value={f}>{f}</option>
-                  ))}
-                </select>
+                {/* Semestre + Filière */}
+                {module && (
+                  <>
+                    <label style={{ fontSize: 12, fontWeight: 600, color: "#374151", display: "block", marginBottom: 6 }}>
+                      Semestre
+                    </label>
+                    <select
+                      value={semestre}
+                      onChange={(e) => setSemestre(e.target.value)}
+                      style={{
+                        width: "100%", padding: "10px 14px", borderRadius: 8,
+                        border: "1.5px solid #cbd5e1", fontSize: 14, outline: "none",
+                        boxSizing: "border-box", color: "#1e293b", background: "#fff", marginBottom: 14,
+                      }}
+                    >
+                      <option value="Tous">Tous les semestres</option>
+                      {(selectedModuleObj?.semestres ?? []).map((s) => (
+                        <option key={s} value={s}>{s}</option>
+                      ))}
+                    </select>
+
+                    <label style={{ fontSize: 12, fontWeight: 600, color: "#374151", display: "block", marginBottom: 6 }}>
+                      Filière <span style={{ fontWeight: 400, color: "#94a3b8" }}>(optionnel)</span>
+                    </label>
+                    <select
+                      value={filiere}
+                      onChange={(e) => setFiliere(e.target.value)}
+                      style={{
+                        width: "100%", padding: "10px 14px", borderRadius: 8,
+                        border: "1.5px solid #cbd5e1", fontSize: 14, outline: "none",
+                        boxSizing: "border-box", color: "#1e293b", background: "#fff", marginBottom: 14,
+                      }}
+                    >
+                      <option value="">Toutes les filières</option>
+                      {(selectedModuleObj?.filieres ?? []).map((f) => (
+                        <option key={f} value={f}>{f}</option>
+                      ))}
+                    </select>
+                  </>
+                )}
               </>
             )}
 

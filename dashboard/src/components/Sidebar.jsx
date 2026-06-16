@@ -1,10 +1,11 @@
 const NAV = [
-  { key: "overview",          icon: "◈", label: "Vue d'ensemble" },
-  { key: "etudiants",         icon: "⊞", label: "Étudiants" },
-  { key: "alertes",           icon: "◉", label: "Historique des Alertes" },
-  { key: "importation",       icon: "↑", label: "Importation CSV" },
-  { key: "gestion-etudiants", icon: "✦", label: "Gestion Étudiants" },
-  { key: "sync",              icon: "↻", label: "Synchronisation" },
+  { key: "overview",             icon: "◈", label: "Vue d'ensemble" },
+  { key: "etudiants",            icon: "⊞", label: "Étudiants" },
+  { key: "alertes",              icon: "◉", label: "Historique des Alertes" },
+  { key: "importation",          icon: "↑", label: "Importation CSV" },
+  { key: "gestion-etudiants",    icon: "✦", label: "Gestion Étudiants" },
+  { key: "gestion-professeurs",  icon: "◆", label: "Gestion Professeurs" },
+  { key: "sync",                 icon: "↻", label: "Synchronisation" },
 ];
 
 export default function Sidebar({ active, onNav, onLogout, userName }) {
