@@ -226,16 +226,31 @@ export default function PageImportation() {
             <ResultLine icon="➕" label="Nouvelles absences ajoutées" value={result.absences_ajoutees} color="#1a3a6b" />
             <ResultLine icon="⏭" label="Doublons ignorés" value={result.doublons_ignores} color="#64748b" />
 
-            {result.etudiants_inconnus?.length > 0 && (
+            {result.etudiants_crees_auto?.length > 0 && (
+              <div style={{ backgroundColor: "#f0fdf4", border: "1px solid #86efac", borderRadius: 6, padding: "12px 14px" }}>
+                <div style={{ fontSize: 13, fontWeight: 600, color: "#166534", marginBottom: 6 }}>
+                  ✓ {result.etudiants_crees_auto.length} nouvel(s) étudiant(s) créé(s) automatiquement
+                </div>
+                {result.etudiants_crees_auto.map((e, i) => (
+                  <div key={i} style={{ fontSize: 12, color: "#15803d" }}>
+                    → {e.prenom} {e.nom}
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {result.etudiants_non_crees_filiere_inconnue?.length > 0 && (
               <div style={{ backgroundColor: "#fffbeb", border: "1px solid #fde68a", borderRadius: 6, padding: "12px 14px" }}>
                 <div style={{ fontSize: 13, fontWeight: 600, color: "#92400e", marginBottom: 4 }}>
-                  ⚠ {result.etudiants_inconnus.length} étudiant(s) non trouvé(s)
+                  ⚠ {result.etudiants_non_crees_filiere_inconnue.length} étudiant(s) non créé(s) — filière introuvable
                 </div>
-                <div style={{ fontSize: 12, color: "#78350f" }}>
-                  ID inscription : {result.etudiants_inconnus.join(", ")}
-                </div>
+                {result.etudiants_non_crees_filiere_inconnue.map((e, i) => (
+                  <div key={i} style={{ fontSize: 12, color: "#78350f" }}>
+                    ID {e.id_inscr} · {e.session_programme || "SessionProgramme manquant"}
+                  </div>
+                ))}
                 <div style={{ fontSize: 12, color: "#78350f", marginTop: 4 }}>
-                  → Ajoutez-les dans <strong>Gestion Étudiants</strong>
+                  → Créez-les manuellement dans <strong>Gestion Étudiants</strong>
                 </div>
               </div>
             )}

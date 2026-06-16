@@ -72,6 +72,76 @@ def _gen_email(prenom: str, nom: str) -> str:
     return f"{clean(prenom)}.{clean(nom)}@esith.net"
 
 
+import re as _re
+
+def _find_filiere_for_csv(conn, session_programme: str, cursus: str):
+    """Déduit id_filiere depuis SessionProgramme/Cursus du CSV Konosys. Retourne int ou None."""
+    def _norm(s):
+        return unicodedata.normalize("NFD", str(s or "")).encode("ascii", "ignore").decode().lower().strip()
+
+    sp  = (session_programme or "").strip()
+    cur = (cursus or "").strip()
+
+    # 1. Étudiant existant avec même session_programme → réutilise son id_filiere
+    if sp and _norm(sp) != "nan":
+        row = conn.execute(
+            "SELECT id_filiere FROM etudiants"
+            " WHERE session_programme=? AND id_filiere IS NOT NULL LIMIT 1",
+            (sp,),
+        ).fetchone()
+        if row:
+            return int(row[0])
+
+    # 2. Extraire le code groupe : depuis Cursus (S3-BDM2G2 → BDM2G2) ou premier token du SP
+    group_code = ""
+    if cur and _norm(cur) != "nan" and "-" in cur:
+        group_code = cur.split("-", 1)[1]          # BDM2G2
+    elif sp and _norm(sp) != "nan" and sp.split():
+        group_code = sp.split()[0]                  # BDM2G2
+
+    if not group_code:
+        return None
+
+    # 3. Correspondance directe sur code filière
+    row = conn.execute(
+        "SELECT id FROM filieres WHERE UPPER(code)=UPPER(?)", (group_code,)
+    ).fetchone()
+    if row:
+        return int(row[0])
+
+    # 4. Préfixe alpha (BDM2G2 → BDM, IMS2G1 → IMS, EO2G2_B → EO)
+    m = _re.match(r"^([A-Za-z]+(?:-[A-Za-z]+)*)", group_code)
+    if not m:
+        return None
+    prefix = m.group(1).upper()
+
+    # Détecter le niveau dans SessionProgramme (1 ou 2)
+    niveau_num = None
+    m_niv = _re.search(r"\b([12])[eè]", _norm(sp))
+    if m_niv:
+        niveau_num = m_niv.group(1)
+
+    candidates = conn.execute(
+        "SELECT id, code, niveau FROM filieres"
+        " WHERE UPPER(code) LIKE ? OR UPPER(code) LIKE ? OR UPPER(code)=?",
+        (f"%{prefix}%", f"GI-{prefix}%", prefix),
+    ).fetchall()
+
+    if not candidates:
+        return None
+    if len(candidates) == 1:
+        return int(candidates[0][0])
+
+    # Filtrer par niveau si détecté
+    if niveau_num:
+        filtered = [c for c in candidates if c[2] and c[2].startswith(niveau_num)]
+        if filtered:
+            return int(min(filtered, key=lambda c: len(c[1]))[0])
+
+    # Prendre la filière au code le plus court (code de base)
+    return int(min(candidates, key=lambda c: len(c[1]))[0])
+
+
 # ── Cache mémoire ─────────────────────────────────────────────────────────────
 
 _cache: dict = {"data": None}
@@ -360,7 +430,8 @@ def import_absences_csv():
         "lignes_traitees": 0,
         "absences_ajoutees": 0,
         "doublons_ignores": 0,
-        "etudiants_inconnus": [],
+        "etudiants_crees_auto": [],                  # [{prenom, nom}]
+        "etudiants_non_crees_filiere_inconnue": [],  # [{id_inscr, session_programme}]
         "modules_crees": [],
         "alertes_declenchees": 0,
         "emails_envoyes": 0,
@@ -387,9 +458,36 @@ def import_absences_csv():
             (id_inscr,),
         ).fetchone()
         if not et:
-            if id_inscr not in stats["etudiants_inconnus"]:
-                stats["etudiants_inconnus"].append(id_inscr)
-            continue
+            nom_csv    = str(row.get("Nom",    "")).strip()
+            prenom_csv = str(row.get("Prenom", "")).strip()
+            sp_csv     = str(row.get("SessionProgramme", "")).strip()
+            cursus_csv = str(row.get("Cursus", "")).strip()
+
+            id_filiere_auto = _find_filiere_for_csv(conn, sp_csv, cursus_csv)
+
+            if not nom_csv or not prenom_csv or id_filiere_auto is None:
+                if not any(x["id_inscr"] == id_inscr for x in stats["etudiants_non_crees_filiere_inconnue"]):
+                    stats["etudiants_non_crees_filiere_inconnue"].append({
+                        "id_inscr": id_inscr,
+                        "session_programme": sp_csv,
+                    })
+                continue
+
+            email_auto = _gen_email(prenom_csv, nom_csv)
+            cur_ins = conn.execute(
+                "INSERT INTO etudiants"
+                " (id_inscriptionsessionprogramme, nom, prenom, email, id_filiere, session_programme, cursus)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (id_inscr, nom_csv, prenom_csv, email_auto,
+                 id_filiere_auto, sp_csv or None, cursus_csv or None),
+            )
+            conn.commit()
+            et = conn.execute(
+                "SELECT id, id_filiere FROM etudiants WHERE id=?", (cur_ins.lastrowid,)
+            ).fetchone()
+            if not any(x["prenom"] == prenom_csv and x["nom"] == nom_csv
+                       for x in stats["etudiants_crees_auto"]):
+                stats["etudiants_crees_auto"].append({"prenom": prenom_csv, "nom": nom_csv})
 
         id_etudiant = int(et[0])
         id_filiere  = et[1]

@@ -1,0 +1,7 @@
+id_absence;Nom;Prenom;Seance;DATE;Heure;Duree;DureeDecimal;SessionProgramme;Cursus;Module;Excuse;Motif;id_inscriptionsessionprogramme
+AC99001001;Benali;Youssef;1;2026-01-08;08:00;02:00;2.0;BDM2G1 2eme annee 2025-2026;S3-BDM2G1;Statistiques Appliquées;Non;.;99001
+AC99001002;Benali;Youssef;2;2026-01-10;10:00;02:00;2.0;BDM2G1 2eme annee 2025-2026;S3-BDM2G1;Statistiques Appliquées;Non;.;99001
+AC99001003;Benali;Youssef;3;2026-01-13;08:00;02:00;2.0;BDM2G1 2eme annee 2025-2026;S3-BDM2G1;Statistiques Appliquées;Non;.;99001
+AC99001004;Benali;Youssef;4;2026-01-15;08:00;02:00;2.0;BDM2G1 2eme annee 2025-2026;S3-BDM2G1;Statistiques Appliquées;Non;.;99001
+AC99001005;Benali;Youssef;5;2026-01-17;10:00;02:00;2.0;BDM2G1 2eme annee 2025-2026;S3-BDM2G1;Statistiques Appliquées;Non;.;99001
+AC99001006;Benali;Youssef;6;2026-01-20;08:00;02:00;2.0;BDM2G1 2eme annee 2025-2026;S3-BDM2G1;Statistiques Appliquées;Non;.;99001
