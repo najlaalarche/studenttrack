@@ -1,0 +1,12 @@
+id_absence;Nom;Prenom;Seance;DATE;Heure;Duree;DureeDecimal;SessionProgramme;Cursus;Module;Excuse;Motif;id_inscriptionsessionprogramme
+1;Taibouch;Oussama;1;2025-12-10;08:00;01:30;1.5;IMS 2eme annee 2025-2026;S3-IMS2;SPC 4.0;Non;.;9011
+2;Taibouch;Oussama;2;2026-01-23;10:00;01:30;1.5;IMS 2eme annee 2025-2026;S3-IMS2;SPC 4.0;Non;.;9011
+3;Taibouch;Oussama;3;2026-02-13;08:00;01:30;1.5;IMS 2eme annee 2025-2026;S3-IMS2;SPC 4.0;Non;.;9011
+4;Taibouch;Oussama;4;2026-02-19;10:00;03:00;3.0;IMS 2eme annee 2025-2026;S3-IMS2;SPC 4.0;Non;.;9011
+5;Taibouch;Oussama;5;2026-02-19;13:00;03:00;3.0;IMS 2eme annee 2025-2026;S3-IMS2;SPC 4.0;Non;.;9011
+6;Taibouch;Oussama;6;2026-02-20;08:00;01:30;1.5;IMS 2eme annee 2025-2026;S3-IMS2;SPC 4.0;Non;.;9011
+7;Taibouch;Oussama;7;2026-03-31;10:00;03:00;3.0;IMS 2eme annee 2025-2026;S3-IMS2;SPC 4.0;Non;.;9011
+8;Taibouch;Oussama;8;2026-04-06;08:00;03:00;3.0;IMS 2eme annee 2025-2026;S3-IMS2;SPC 4.0;Non;.;9011
+9;Taibouch;Oussama;9;2026-04-07;10:00;03:00;3.0;IMS 2eme annee 2025-2026;S3-IMS2;SPC 4.0;Non;.;9011
+10;Taibouch;Oussama;10;2026-04-14;08:00;03:00;3.0;IMS 2eme annee 2025-2026;S3-IMS2;SPC 4.0;Non;.;9011
+11;Taibouch;Oussama;11;2026-04-17;10:00;01:30;1.5;IMS 2eme annee 2025-2026;S3-IMS2;SPC 4.0;Non;.;9011

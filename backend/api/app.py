@@ -444,10 +444,8 @@ def import_absences_csv():
         stats["lignes_traitees"] += 1
 
         id_absence = str(row.get("id_absence", "")).strip()
-        if id_absence and id_absence not in ("", "nan"):
-            if conn.execute("SELECT id FROM absences WHERE id_absence_konosys=?", (id_absence,)).fetchone():
-                stats["doublons_ignores"] += 1
-                continue
+        if not id_absence or id_absence == "nan":
+            id_absence = ""
 
         id_inscr = str(row.get("id_inscriptionsessionprogramme", "")).strip()
         if not id_inscr or id_inscr == "nan":
@@ -492,6 +490,16 @@ def import_absences_csv():
         id_etudiant = int(et[0])
         id_filiere  = et[1]
 
+        # Doublon check par (id_absence_konosys, id_etudiant) — clé composée obligatoire
+        # car Konosys réutilise les mêmes IDs séquentiels par export (pas globalement uniques)
+        if id_absence:
+            if conn.execute(
+                "SELECT id FROM absences WHERE id_absence_konosys=? AND id_etudiant=?",
+                (id_absence, id_etudiant),
+            ).fetchone():
+                stats["doublons_ignores"] += 1
+                continue
+
         module_nom = str(row.get("Module", "")).strip()
         if not module_nom or module_nom == "nan":
             continue
@@ -516,7 +524,7 @@ def import_absences_csv():
 
         # Parse date
         try:
-            d = pd.to_datetime(str(row.get("DATE", "")), dayfirst=True, errors="coerce")
+            d = pd.to_datetime(str(row.get("DATE", "")), dayfirst=False, errors="coerce")
             date_str = d.strftime("%Y-%m-%d") if not pd.isnull(d) else str(row.get("DATE", ""))
         except Exception:
             date_str = str(row.get("DATE", ""))
