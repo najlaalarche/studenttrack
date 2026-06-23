@@ -163,34 +163,45 @@ def calculer_profils(df_abs: pd.DataFrame) -> list[ProfilEtudiant]:
         plus_grave = max(statuts_modules, key=lambda s: ordre[s.statut_exam], default=None)
         module_grave_nom = plus_grave.module if plus_grave else ""
 
+        # ── Score de base : pire taux NJ (module le plus problématique) ──────
         if statuts_modules:
-            max_taux_nj    = max(s.taux_nj    for s in statuts_modules)
-            max_taux_total = max(s.taux_total for s in statuts_modules)
-            score_global   = round(max_taux_nj * 0.5 + max_taux_total * 0.5, 2)
+            pire_taux_nj = max(s.taux_nj for s in statuts_modules)
         else:
-            score_global = 0.0
+            pire_taux_nj = 0.0
 
-        # Statut EXCLU force niveau_risque "critique" indépendamment du score
+        if pire_taux_nj >= 50:
+            score_base = 100.0
+        elif pire_taux_nj >= 33:
+            score_base = 85.0
+        elif pire_taux_nj >= 20:
+            score_base = 60.0
+        elif pire_taux_nj >= 10:
+            score_base = 35.0
+        else:
+            score_base = round(pire_taux_nj * 3, 2)
+
+        # ── Règles EXCLU / AVERTI ──────────────────────────────────────────
         if nb_exclu > 0:
+            score_risque  = max(score_base, 70.0)
             niveau_risque = "critique"
             niveau_alerte = 3
         elif nb_averti > 0:
-            # AVERTI : modéré minimum, critique si score >= 70
-            if score_global >= 70:
+            score_risque  = max(score_base, 40.0)
+            niveau_risque = "critique" if score_risque >= 70 else "modéré"
+            niveau_alerte = 3 if score_risque >= 70 else 2
+        else:
+            score_risque = score_base
+            if score_risque >= 70:
                 niveau_risque = "critique"
                 niveau_alerte = 3
-            else:
+            elif score_risque >= 40:
                 niveau_risque = "modéré"
                 niveau_alerte = 2
-        elif score_global >= 70:
-            niveau_risque = "critique"
-            niveau_alerte = 3
-        elif score_global >= 40:
-            niveau_risque = "modéré"
-            niveau_alerte = 2
-        else:
-            niveau_risque = "faible"
-            niveau_alerte = 0
+            else:
+                niveau_risque = "faible"
+                niveau_alerte = 0
+
+        score_global = score_risque
 
         if nb_exclu > 0:
             action = "NOTIFY_EXCLUSION"
@@ -217,7 +228,7 @@ def calculer_profils(df_abs: pd.DataFrame) -> list[ProfilEtudiant]:
             nb_modules_averti=nb_averti,
             module_plus_grave=module_grave_nom,
             score_global=score_global,
-            score_risque=score_global,
+            score_risque=score_risque,
             niveau_risque_scoring="ROUGE" if nb_exclu > 0 else ("ORANGE" if nb_averti > 0 else "VERT"),
             niveau_risque=niveau_risque,
             niveau_alerte=niveau_alerte,
@@ -268,9 +279,64 @@ if __name__ == "__main__":
     upsert_alertes(profils)
     alertes = filtrer_alertes(profils)
 
-    print(f"[engine] {len(profils)} profils | {len(alertes)} alertes")
+    print(f"\n[engine] {len(profils)} profils recalculés | {len(alertes)} alertes\n")
+
+    # ── Résumé par niveau ────────────────────────────────────────────────
+    critiques = [p for p in profils if p.niveau_risque == "critique"]
+    moderes   = [p for p in profils if p.niveau_risque == "modéré"]
+    faibles   = [p for p in profils if p.niveau_risque == "faible"]
+
+    print("=== RÉSUMÉ DES NIVEAUX DE RISQUE ===")
+    print(f"  Critique  (score >= 70) : {len(critiques)} étudiant(s)")
+    print(f"  Modéré    (40-69)       : {len(moderes)} étudiant(s)")
+    print(f"  Faible    (< 40)        : {len(faibles)} étudiant(s)")
+
+    # ── Vérification EXCLU -> critique ──────────────────────────────────
+    print("\n=== VERIFICATION EXCLU -> critique ===")
+    erreurs_exclu = [p for p in profils if p.nb_modules_exclu > 0 and p.niveau_risque != "critique"]
+    if erreurs_exclu:
+        print(f"  [ERREUR] {len(erreurs_exclu)} etudiant(s) avec EXCLU mais pas en critique !")
+        for p in erreurs_exclu:
+            print(f"    {p.prenom} {p.nom} | score={p.score_risque} | {p.niveau_risque}")
+    else:
+        print(f"  [OK] Tous les etudiants avec module EXCLU sont en 'critique'")
+
+    # ── Vérification AVERTI -> modéré minimum ───────────────────────────
+    print("\n=== VERIFICATION AVERTI -> modere minimum ===")
+    erreurs_averti = [
+        p for p in profils
+        if p.nb_modules_averti > 0 and p.nb_modules_exclu == 0 and p.niveau_risque == "faible"
+    ]
+    if erreurs_averti:
+        print(f"  [ERREUR] {len(erreurs_averti)} etudiant(s) avec AVERTI mais en 'faible' !")
+        for p in erreurs_averti:
+            print(f"    {p.prenom} {p.nom} | score={p.score_risque} | {p.niveau_risque}")
+    else:
+        print(f"  [OK] Tous les etudiants avec module AVERTI sont en 'modere' minimum")
+
+    # ── Vérification Najlaa Larche ───────────────────────────────────────
+    print("\n=== VÉRIFICATION NAJLAA LARCHE ===")
+    najlaa = next(
+        (p for p in profils if "larche" in p.nom.lower() or "najlaa" in p.prenom.lower()),
+        None,
+    )
+    if najlaa:
+        print(f"  Étudiant  : {najlaa.prenom} {najlaa.nom}")
+        print(f"  Score     : {najlaa.score_risque}")
+        print(f"  Niveau    : {najlaa.niveau_risque}")
+        print(f"  Modules EXCLU : {najlaa.nb_modules_exclu}")
+        for m in najlaa.modules:
+            if m.statut_exam != "AUTORISE":
+                print(f"    [{m.statut_exam}] {m.module} — NJ:{m.taux_nj:.1f}% / total:{m.taux_total:.1f}%")
+        attendu_ok = najlaa.score_risque >= 70 and najlaa.niveau_risque == "critique"
+        print(f"  Attendu score>=70, critique → {'[OK]' if attendu_ok else '[ERREUR]'}")
+    else:
+        print("  [INFO] Najlaa Larche introuvable dans les données")
+
+    # ── Détail complet ───────────────────────────────────────────────────
+    print("\n=== DÉTAIL PAR ÉTUDIANT ===")
     for p in profils:
-        print(f"  {p.prenom} {p.nom} | score={p.score_global} | {p.niveau_risque} | {p.action_recommandee}")
+        print(f"  {p.prenom} {p.nom} | score={p.score_risque} | {p.niveau_risque} | {p.action_recommandee}")
         for m in p.modules:
             if m.statut_exam != "AUTORISE":
                 print(f"    [{m.statut_exam}] {m.module} — NJ:{m.nb_abs_nj} ({m.taux_nj:.1f}%) | total:{m.taux_total:.1f}% / {m.total_seances}h")
