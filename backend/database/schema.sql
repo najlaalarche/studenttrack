@@ -26,6 +26,7 @@ CREATE TABLE IF NOT EXISTS etudiants (
     id_filiere INTEGER,
     cursus TEXT,
     session_programme TEXT,
+    matricule TEXT,
     FOREIGN KEY (id_filiere) REFERENCES filieres(id)
 );
 
@@ -80,6 +81,29 @@ CREATE TABLE IF NOT EXISTS emails_log (
     envoye BOOLEAN DEFAULT 0,
     envoye_le DATETIME,
     FOREIGN KEY (id_alerte) REFERENCES alertes(id)
+);
+
+CREATE TABLE IF NOT EXISTS inscriptions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    id_etudiant INTEGER NOT NULL REFERENCES etudiants(id),
+    id_inscriptionsessionprogramme INTEGER UNIQUE,
+    matricule TEXT,
+    semestre TEXT NOT NULL,
+    annee_universitaire TEXT NOT NULL,
+    session_programme TEXT,
+    id_filiere INTEGER REFERENCES filieres(id),
+    UNIQUE(id_etudiant, semestre, annee_universitaire)
+);
+
+CREATE TABLE IF NOT EXISTS notes (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    id_etudiant INTEGER NOT NULL REFERENCES etudiants(id),
+    moyenne_generale REAL CHECK (moyenne_generale BETWEEN 0 AND 20),
+    semestre TEXT,
+    annee_universitaire TEXT NOT NULL,
+    source_fichier TEXT,
+    imported_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(id_etudiant, semestre, annee_universitaire)
 );
 
 CREATE INDEX IF NOT EXISTS idx_absences_etudiant ON absences(id_etudiant);

@@ -49,7 +49,7 @@ class ProfilEtudiant:
     nb_modules_exclu:     int  = 0
     nb_modules_averti:    int  = 0
     module_plus_grave:    str  = ""
-    moyenne_generale:     float = 0.0
+    moyenne_generale:     float | None = None
     score_notes:          float = 0.0
     score_absences:       float = 0.0
     score_global:         float = 0.0
@@ -75,6 +75,47 @@ def _get_email_flags(id_etudiant_int: int, id_module: int) -> tuple[bool, bool]:
     except Exception:
         pass
     return False, False
+
+
+def _charger_moyennes() -> dict[int, float]:
+    """Moyenne la plus récente (année universitaire puis semestre) par étudiant."""
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        rows = conn.execute(
+            "SELECT id_etudiant, moyenne_generale FROM notes"
+            " WHERE moyenne_generale IS NOT NULL"
+            " ORDER BY annee_universitaire, CAST(SUBSTR(semestre, 2) AS INTEGER), imported_at"
+        ).fetchall()
+        conn.close()
+    except sqlite3.OperationalError:  # table notes absente
+        return {}
+    return {id_et: float(moy) for id_et, moy in rows}  # la dernière ligne l'emporte
+
+
+def _charger_identites(ids: set[int]) -> dict[int, dict]:
+    """Identité des étudiants sans absence (mêmes champs que load_absences_df)."""
+    if not ids:
+        return {}
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    rows = conn.execute(
+        f"""SELECT e.id, e.nom, e.prenom, e.email, COALESCE(e.cursus, '') AS cursus,
+                   COALESCE(f.nom, '') AS filiere, COALESCE(f.code, '') AS code_filiere,
+                   COALESCE(f.niveau, '') AS annee
+            FROM etudiants e LEFT JOIN filieres f ON e.id_filiere = f.id
+            WHERE e.id IN ({','.join('?' * len(ids))})""",
+        tuple(ids),
+    ).fetchall()
+    conn.close()
+    return {r["id"]: dict(r) for r in rows}
+
+
+def _score_notes(moyenne: float) -> float:
+    if moyenne >= 14: return 0.0
+    if moyenne >= 12: return 20.0
+    if moyenne >= 10: return 40.0
+    if moyenne >= 8:  return 65.0
+    return 90.0
 
 
 def _calculer_statut_module(module_nom: str, id_module: int, grp_mod: pd.DataFrame, id_etudiant_int: int) -> StatutModule:
@@ -130,9 +171,16 @@ def _calculer_statut_module(module_nom: str, id_module: int, grp_mod: pd.DataFra
 
 def calculer_profils(df_abs: pd.DataFrame) -> list[ProfilEtudiant]:
     profils = []
+    moyennes = _charger_moyennes()
 
-    for id_etudiant, groupe in df_abs.groupby("id_etudiant"):
-        row0 = groupe.iloc[0]
+    # Étudiants avec absences + étudiants n'ayant que des notes (ex. créés par l'import notes)
+    groupes = list(df_abs.groupby("id_etudiant"))
+    ids_avec_abs = {int(i) for i, _ in groupes if str(i).isdigit()}
+    identites = _charger_identites(set(moyennes) - ids_avec_abs)
+    groupes += [(str(i), df_abs.iloc[0:0]) for i in sorted(identites)]
+
+    for id_etudiant, groupe in groupes:
+        row0 = groupe.iloc[0] if len(groupe) else identites[int(id_etudiant)]
         nom          = str(row0.get("nom", ""))
         prenom       = str(row0.get("prenom", ""))
         email        = str(row0.get("email", "inconnu@esith.net"))
@@ -179,6 +227,13 @@ def calculer_profils(df_abs: pd.DataFrame) -> list[ProfilEtudiant]:
             score_base = 35.0
         else:
             score_base = round(pire_taux_nj * 3, 2)
+
+        # ── Pondération notes : 60 % absences / 40 % notes (si moyenne connue) ──
+        score_absences = score_base
+        moyenne        = moyennes.get(id_etudiant_int)
+        score_notes    = _score_notes(moyenne) if moyenne is not None else 0.0
+        if moyenne is not None:
+            score_base = round(score_absences * 0.60 + score_notes * 0.40, 2)
 
         # ── Règles EXCLU / AVERTI ──────────────────────────────────────────
         if nb_exclu > 0:
@@ -227,6 +282,9 @@ def calculer_profils(df_abs: pd.DataFrame) -> list[ProfilEtudiant]:
             nb_modules_exclu=nb_exclu,
             nb_modules_averti=nb_averti,
             module_plus_grave=module_grave_nom,
+            moyenne_generale=moyenne,
+            score_notes=score_notes,
+            score_absences=score_absences,
             score_global=score_global,
             score_risque=score_risque,
             niveau_risque_scoring="ROUGE" if nb_exclu > 0 else ("ORANGE" if nb_averti > 0 else "VERT"),

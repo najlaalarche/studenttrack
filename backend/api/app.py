@@ -33,6 +33,9 @@ from backend.agent.ia_agent import (
     send_email          as _send_email,
 )
 from backend.agent.email_agent import init_alerts_db, process_student_alerts, get_alert_history
+from backend.database.import_notes import (
+    import_notes, preview_notes, ensure_notes_schema, cle_nom, id_inscription_provisoire,
+)
 
 app = Flask(__name__)
 CORS(app)
@@ -95,6 +98,10 @@ def _init_professeurs():
 
 _init_professeurs()
 
+_conn = sqlite3.connect(DB_PATH)
+ensure_notes_schema(_conn)
+_conn.close()
+
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -133,6 +140,12 @@ def _gen_email(prenom: str, nom: str) -> str:
 
 
 import re as _re
+
+def _cellule(row, col: str) -> str:
+    """Valeur texte d'une cellule du fichier absences ('' si vide / NaN)."""
+    v = row.get(col, "")
+    return "" if pd.isna(v) else str(v).strip()
+
 
 def _find_filiere_for_csv(conn, session_programme: str, cursus: str):
     """Déduit id_filiere depuis SessionProgramme/Cursus du CSV Konosys. Retourne int ou None."""
@@ -383,7 +396,18 @@ def etudiant(id_etudiant: str):
             abs_df[cols].rename(columns={"date_str": "date_absence"}).to_dict(orient="records")
         )
 
-    return jsonify({"profil": _serialize(profil), "absences": absences, "notes": [], "scoring": {}})
+    conn = _db()
+    notes = [dict(r) for r in conn.execute(
+        """SELECT semestre, moyenne_generale, annee_universitaire, source_fichier, imported_at
+           FROM notes WHERE id_etudiant=?
+           ORDER BY annee_universitaire, CAST(SUBSTR(semestre, 2) AS INTEGER)""",
+        (int(id_etudiant),),
+    ).fetchall()]
+    conn.close()
+    for n in notes:
+        n["statut"] = "Validé" if n["moyenne_generale"] >= 10 else "Non validé"
+
+    return jsonify({"profil": _serialize(profil), "absences": absences, "notes": notes, "scoring": {}})
 
 
 # ── Routes — Alertes (historique, lecture seule) ──────────────────────────────
@@ -491,7 +515,8 @@ def import_absences_csv():
         "absences_ajoutees": 0,
         "doublons_ignores": 0,
         "etudiants_crees_auto": [],                  # [{prenom, nom}]
-        "etudiants_non_crees_filiere_inconnue": [],  # [{id_inscr, session_programme}]
+        "etudiants_non_crees_filiere_inconnue": [],  # [{id_inscr, nom, prenom, session_programme}]
+        "etudiants_homonymes": [],                   # [{nom, prenom, session_programme}] — lignes ignorées
         "modules_crees": [],
         "alertes_declenchees": 0,
         "emails_envoyes": 0,
@@ -500,6 +525,12 @@ def import_absences_csv():
     conn = _db()
     etudiants_modules_touches: set = set()
 
+    # Index Nom + Prénom normalisés → étudiants (construit une fois pour tout le fichier)
+    index_noms: dict = defaultdict(list)
+    for r in conn.execute("SELECT id, nom, prenom, id_filiere, id_inscriptionsessionprogramme FROM etudiants"):
+        index_noms[cle_nom(r["nom"], r["prenom"])].append(dict(r))
+    codes_filiere = {r[0]: r[1] for r in conn.execute("SELECT id, code FROM filieres")}
+
     for _, row in df.iterrows():
         stats["lignes_traitees"] += 1
 
@@ -507,48 +538,81 @@ def import_absences_csv():
         if not id_absence or id_absence == "nan":
             id_absence = ""
 
-        id_inscr = str(row.get("id_inscriptionsessionprogramme", "")).strip()
-        if not id_inscr or id_inscr == "nan":
+        nom_csv    = _cellule(row, "Nom")
+        prenom_csv = _cellule(row, "Prenom")
+        sp_csv     = _cellule(row, "SessionProgramme")
+        cursus_csv = _cellule(row, "Cursus")
+        id_inscr   = _cellule(row, "id_inscriptionsessionprogramme")
+        if id_inscr.endswith(".0"):  # pandas lit parfois les entiers en float
+            id_inscr = id_inscr[:-2]
+        if not nom_csv or not prenom_csv:
             continue
 
-        et = conn.execute(
-            "SELECT id, id_filiere FROM etudiants WHERE id_inscriptionsessionprogramme=?",
-            (id_inscr,),
-        ).fetchone()
-        if not et:
-            nom_csv    = str(row.get("Nom",    "")).strip()
-            prenom_csv = str(row.get("Prenom", "")).strip()
-            sp_csv     = str(row.get("SessionProgramme", "")).strip()
-            cursus_csv = str(row.get("Cursus", "")).strip()
+        # Recherche UNIQUEMENT par Nom + Prénom normalisés (sans accents, minuscules)
+        candidats = index_noms.get(cle_nom(nom_csv, prenom_csv), [])
+        if len(candidats) > 1:
+            # Homonymes : on départage par la filière du fichier (code, tous niveaux)
+            id_fil = _find_filiere_for_csv(conn, sp_csv, cursus_csv)
+            code = codes_filiere.get(id_fil)
+            candidats = [c for c in candidats if code and codes_filiere.get(c["id_filiere"]) == code]
+            if len(candidats) != 1:
+                if not any(x["nom"] == nom_csv and x["prenom"] == prenom_csv for x in stats["etudiants_homonymes"]):
+                    stats["etudiants_homonymes"].append({"nom": nom_csv, "prenom": prenom_csv, "session_programme": sp_csv})
+                continue
 
+        if candidats:
+            et = candidats[0]
+            # Étudiant créé par l'import de notes (id provisoire < 0) : on lui attribue le vrai id Konosys
+            if et["id_inscriptionsessionprogramme"] < 0 and id_inscr.isdigit() and not conn.execute(
+                "SELECT 1 FROM etudiants WHERE id_inscriptionsessionprogramme=?", (int(id_inscr),)
+            ).fetchone():
+                conn.execute(
+                    "UPDATE etudiants SET id_inscriptionsessionprogramme=?,"
+                    " session_programme=COALESCE(?, session_programme), cursus=COALESCE(?, cursus)"
+                    " WHERE id=?",
+                    (int(id_inscr), sp_csv or None, cursus_csv or None, et["id"]),
+                )
+                et["id_inscriptionsessionprogramme"] = int(id_inscr)
+                conn.commit()
+        else:
             id_filiere_auto = _find_filiere_for_csv(conn, sp_csv, cursus_csv)
-
-            if not nom_csv or not prenom_csv or id_filiere_auto is None:
-                if not any(x["id_inscr"] == id_inscr for x in stats["etudiants_non_crees_filiere_inconnue"]):
+            if id_filiere_auto is None:
+                if not any(x["nom"] == nom_csv and x["prenom"] == prenom_csv
+                           for x in stats["etudiants_non_crees_filiere_inconnue"]):
                     stats["etudiants_non_crees_filiere_inconnue"].append({
-                        "id_inscr": id_inscr,
+                        "id_inscr": id_inscr, "nom": nom_csv, "prenom": prenom_csv,
                         "session_programme": sp_csv,
                     })
                 continue
 
+            # id Konosys réel s'il est libre, sinon id provisoire (colonne NOT NULL UNIQUE)
+            if id_inscr.isdigit() and not conn.execute(
+                "SELECT 1 FROM etudiants WHERE id_inscriptionsessionprogramme=?", (int(id_inscr),)
+            ).fetchone():
+                id_insc_db = int(id_inscr)
+            else:
+                id_insc_db = id_inscription_provisoire(conn)
+
             email_auto = _gen_email(prenom_csv, nom_csv)
+            if conn.execute("SELECT 1 FROM etudiants WHERE email=?", (email_auto,)).fetchone():
+                stats["etudiants_homonymes"].append({"nom": nom_csv, "prenom": prenom_csv,
+                                                     "session_programme": f"email {email_auto} déjà utilisé"})
+                continue
             cur_ins = conn.execute(
                 "INSERT INTO etudiants"
                 " (id_inscriptionsessionprogramme, nom, prenom, email, id_filiere, session_programme, cursus)"
                 " VALUES (?, ?, ?, ?, ?, ?, ?)",
-                (id_inscr, nom_csv, prenom_csv, email_auto,
+                (id_insc_db, nom_csv, prenom_csv, email_auto,
                  id_filiere_auto, sp_csv or None, cursus_csv or None),
             )
             conn.commit()
-            et = conn.execute(
-                "SELECT id, id_filiere FROM etudiants WHERE id=?", (cur_ins.lastrowid,)
-            ).fetchone()
-            if not any(x["prenom"] == prenom_csv and x["nom"] == nom_csv
-                       for x in stats["etudiants_crees_auto"]):
-                stats["etudiants_crees_auto"].append({"prenom": prenom_csv, "nom": nom_csv})
+            et = {"id": cur_ins.lastrowid, "id_filiere": id_filiere_auto,
+                  "id_inscriptionsessionprogramme": id_insc_db}
+            index_noms[cle_nom(nom_csv, prenom_csv)] = [et]
+            stats["etudiants_crees_auto"].append({"prenom": prenom_csv, "nom": nom_csv})
 
-        id_etudiant = int(et[0])
-        id_filiere  = et[1]
+        id_etudiant = int(et["id"])
+        id_filiere  = et["id_filiere"]
 
         # Doublon check par (id_absence_konosys, id_etudiant) — clé composée obligatoire
         # car Konosys réutilise les mêmes IDs séquentiels par export (pas globalement uniques)
@@ -1127,6 +1191,45 @@ def reset_password_route():
     _update_user_password(reset_entry["id_etudiant"], _hash_password(new_password))
     _mark_token_used(token)
     return jsonify({"success": True, "message": "Mot de passe réinitialisé avec succès."})
+
+
+# ── Routes — Import notes (moyennes Konosys) ──────────────────────────────────
+
+def _traiter_fichier_notes(traitement):
+    """Sauve le fichier notes uploadé (.xlsx/.xlsb) dans un fichier temporaire et applique traitement(path, nom)."""
+    if "file" not in request.files:
+        return None, (jsonify({"error": "Aucun fichier fourni"}), 400)
+    uploaded = request.files["file"]
+    ext = Path(uploaded.filename or "").suffix.lower()
+    if ext not in (".xlsx", ".xlsb"):
+        return None, (jsonify({"error": "Format non supporté — utilisez un fichier .xlsx ou .xlsb"}), 400)
+
+    import tempfile
+    tmp = tempfile.NamedTemporaryFile(suffix=ext, delete=False)
+    try:
+        uploaded.save(tmp)
+        tmp.close()
+        return traitement(tmp.name, uploaded.filename), None
+    except Exception as e:
+        return None, (jsonify({"error": f"Fichier illisible : {e}"}), 400)
+    finally:
+        tmp.close()
+        os.unlink(tmp.name)
+
+
+@app.route("/api/import-notes/preview", methods=["POST"])
+def import_notes_preview():
+    apercu, err = _traiter_fichier_notes(lambda path, _nom: preview_notes(path))
+    return err or jsonify(apercu)
+
+
+@app.route("/api/import-notes", methods=["POST"])
+def import_notes_route():
+    stats, err = _traiter_fichier_notes(lambda path, nom: import_notes(path, source_name=nom))
+    if err:
+        return err
+    _cache["data"] = None  # le score risque dépend désormais des notes
+    return jsonify(stats)
 
 
 # ── Routes — Sync ─────────────────────────────────────────────────────────────

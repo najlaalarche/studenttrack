@@ -3,6 +3,7 @@ import { getEtudiants, getEtudiant } from "../../api.js";
 import KpiCard from "../../components/KpiCard.jsx";
 import ModuleBar from "../../components/ModuleBar.jsx";
 import StatutBadge from "../../components/StatutBadge.jsx";
+import NotesTable, { moyenneKpi } from "../../components/NotesTable.jsx";
 import {
   RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis,
   Radar, ResponsiveContainer, Tooltip,
@@ -111,7 +112,7 @@ export default function DashboardEtudiant({ email, onLogout }) {
           <KpiCard label="Absences NJ"     value={profil.total_abs_nj}      color="#d97706" icon="⚠" />
           <KpiCard label="Abs. justifiées" value={profil.total_abs_just}    color="#8DC63F" icon="✓" />
           <KpiCard label="Score risque"    value={`${profil.score_global}/100`} color={profil.score_global >= 70 ? "#dc2626" : profil.score_global >= 40 ? "#d97706" : "#5a9e14"} icon="◎" />
-          <KpiCard label="Moyenne"         value={profil.moyenne_generale ? profil.moyenne_generale.toFixed(2) : "—"} color="#1a3a6b" icon="◐" />
+          <KpiCard label="Moyenne"         {...moyenneKpi(profil.moyenne_generale)} icon="◐" />
         </div>
         <div style={{ width: 280, flexShrink: 0 }}>
           <RiskRadar profil={profil} />
@@ -182,30 +183,7 @@ export default function DashboardEtudiant({ email, onLogout }) {
       )}
 
       {/* Tab Notes */}
-      {tab === "notes" && (
-        <div style={{ ...S.card, padding: 0, overflow: "hidden" }}>
-          <table style={{ width: "100%", borderCollapse: "collapse" }}>
-            <thead><tr>{["Module", "CC", "Examen", "Finale", "Mention", "Statut"].map(h => <th key={h} style={S.th}>{h}</th>)}</tr></thead>
-            <tbody>
-              {notes.length === 0
-                ? <tr><td colSpan={6} style={{ ...S.td, textAlign: "center", color: "#64748b" }}>Aucune note</td></tr>
-                : notes.map((n, i) => (
-                  <tr key={i} style={{ backgroundColor: i % 2 === 0 ? "#FFFFFF" : "#F8FAFC" }}>
-                    <td style={{ ...S.td, fontWeight: 600 }}>{n.Module ?? n.module}</td>
-                    <td style={{ ...S.td, color: "#64748b" }}>{n.Note_CC != null ? Number(n.Note_CC).toFixed(1) : "—"}</td>
-                    <td style={{ ...S.td, color: "#64748b" }}>{n.Note_Examen != null ? Number(n.Note_Examen).toFixed(1) : "—"}</td>
-                    <td style={{ ...S.td, fontWeight: 700, color: Number(n.Note_Finale) >= 10 ? "#5a9e14" : "#dc2626" }}>
-                      {n.Note_Finale != null ? Number(n.Note_Finale).toFixed(1) : "—"}
-                    </td>
-                    <td style={{ ...S.td, color: "#64748b" }}>{n.Mention || "—"}</td>
-                    <td style={S.td}><span style={{ color: n.Statut === "Admis" ? "#5a9e14" : "#dc2626", fontSize: 12, fontWeight: 500 }}>{n.Statut || "—"}</span></td>
-                  </tr>
-                ))
-              }
-            </tbody>
-          </table>
-        </div>
-      )}
+      {tab === "notes" && <NotesTable notes={notes} />}
     </div>
   );
 }

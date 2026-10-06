@@ -3,6 +3,7 @@ import { getEtudiant } from "../../api.js";
 import KpiCard from "../../components/KpiCard.jsx";
 import ModuleBar from "../../components/ModuleBar.jsx";
 import StatutBadge from "../../components/StatutBadge.jsx";
+import NotesTable, { moyenneKpi } from "../../components/NotesTable.jsx";
 import {
   RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis,
   Radar, ResponsiveContainer, Tooltip,
@@ -129,7 +130,7 @@ export default function PageDetailEtudiant({ id_etudiant, onBack }) {
           <KpiCard label="Abs. NJ"        value={p.total_abs_nj}       color="#d97706" icon="⚠" />
           <KpiCard label="Abs. just."     value={p.total_abs_just}     color="#8DC63F" icon="✓" />
           <KpiCard label="Score risque"   value={`${p.score_global}/100`} color={scoreColor} icon="◎" />
-          <KpiCard label="Moyenne"        value={p.moyenne_generale ? Number(p.moyenne_generale).toFixed(2) : "—"} color="#1a3a6b" icon="◐" />
+          <KpiCard label="Moyenne"        {...moyenneKpi(p.moyenne_generale)} icon="◐" />
           <KpiCard label="Total absences" value={p.total_absences}     color="#64748b" icon="≡" />
         </div>
         <div style={{ width: 280, flexShrink: 0 }}>
@@ -207,31 +208,7 @@ export default function PageDetailEtudiant({ id_etudiant, onBack }) {
       )}
 
       {/* Tab Notes */}
-      {tab === "notes" && (
-        <div style={{ backgroundColor: "#FFFFFF", border: "1px solid #E2E8F0", borderRadius: 8, overflow: "auto", boxShadow: "0 1px 3px rgba(0,0,0,0.06)" }}>
-          <table style={{ width: "100%", borderCollapse: "collapse" }}>
-            <thead><tr>{["Module", "Semestre", "CC", "Examen", "Finale", "Mention", "Statut"].map(h => <th key={h} style={S.th}>{h}</th>)}</tr></thead>
-            <tbody>
-              {notes.length === 0
-                ? <tr><td colSpan={7} style={{ ...S.td, textAlign: "center", color: "#64748b" }}>Aucune note</td></tr>
-                : notes.map((n, i) => (
-                  <tr key={i} style={{ backgroundColor: i % 2 === 0 ? "#FFFFFF" : "#F8FAFC" }}>
-                    <td style={{ ...S.td, fontWeight: 600 }}>{n.Module}</td>
-                    <td style={{ ...S.td, color: "#64748b", fontSize: 12 }}>{n.Semestre}</td>
-                    <td style={{ ...S.td, color: "#64748b" }}>{n.Note_CC != null ? Number(n.Note_CC).toFixed(1) : "—"}</td>
-                    <td style={{ ...S.td, color: "#64748b" }}>{n.Note_Examen != null ? Number(n.Note_Examen).toFixed(1) : "—"}</td>
-                    <td style={{ ...S.td, fontWeight: 700, color: Number(n.Note_Finale) >= 10 ? "#5a9e14" : "#dc2626" }}>
-                      {n.Note_Finale != null ? Number(n.Note_Finale).toFixed(1) : "—"}
-                    </td>
-                    <td style={{ ...S.td, color: "#64748b", fontSize: 12 }}>{n.Mention || "—"}</td>
-                    <td style={S.td}><span style={{ color: n.Statut === "Admis" ? "#5a9e14" : "#dc2626", fontSize: 12, fontWeight: 600 }}>{n.Statut || "—"}</span></td>
-                  </tr>
-                ))
-              }
-            </tbody>
-          </table>
-        </div>
-      )}
+      {tab === "notes" && <NotesTable notes={notes} />}
     </div>
   );
 }
