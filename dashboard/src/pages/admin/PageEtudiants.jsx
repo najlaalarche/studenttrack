@@ -1,9 +1,8 @@
 import { useEffect, useState } from "react";
 import { getEtudiants, getFilieres, getModules } from "../../api.js";
-import StatutBadge from "../../components/StatutBadge.jsx";
 
-const RISQUES   = ["Tous", "faible", "modéré", "critique"];
 const STATUTS_F = ["Tous", "AUTORISE", "AVERTI", "EXCLU"];
+const LABEL_STATUT = { AUTORISE: "Rien à signaler" };
 
 const S = {
   th: { padding: "10px 16px", fontSize: 11, fontWeight: 600, letterSpacing: "0.07em", textTransform: "uppercase", color: "#64748b", textAlign: "left", borderBottom: "1px solid #E2E8F0", whiteSpace: "nowrap", backgroundColor: "#F8FAFC" },
@@ -21,6 +20,39 @@ function Spinner() {
     <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: 200 }}>
       <div style={{ width: 24, height: 24, border: "2px solid #E2E8F0", borderTop: "2px solid #1a3a6b", borderRadius: "50%", animation: "spin 0.8s linear infinite" }} />
       <style>{`@keyframes spin { to { transform: rotate(360deg); }}`}</style>
+    </div>
+  );
+}
+
+const fmtMoyenne = v => (v === null || v === undefined ? "—" : Number(v).toFixed(2));
+
+// Nombre de modules par statut : 🔴 exclu · 🟡 averti · 🟢 rien à signaler (grisé si 0)
+function CompteursStatut({ etudiant: e }) {
+  const exclu  = e.nb_modules_exclu ?? 0;
+  const averti = e.nb_modules_averti ?? 0;
+  const rien   = Math.max(0, (e.modules ?? []).length - exclu - averti);
+  const items = [
+    { n: exclu,  label: "Exclu",           color: "#dc2626", bg: "rgba(239,68,68,0.1)",  border: "rgba(239,68,68,0.3)" },
+    { n: averti, label: "Averti",          color: "#d97706", bg: "rgba(245,158,11,0.1)", border: "rgba(245,158,11,0.3)" },
+    { n: rien,   label: "Rien à signaler", color: "#5a9e14", bg: "rgba(141,198,63,0.1)", border: "rgba(141,198,63,0.35)" },
+  ];
+  return (
+    <div style={{ display: "flex", gap: 4, flexWrap: "nowrap" }}>
+      {items.map(it => {
+        const vide = it.n === 0;
+        return (
+          <span key={it.label} title={`${it.n} module(s) — ${it.label}`} style={{
+            display: "inline-flex", alignItems: "center", gap: 4, whiteSpace: "nowrap",
+            padding: "2px 7px", borderRadius: 99, fontSize: 11, fontWeight: 600,
+            color: vide ? "#94a3b8" : it.color,
+            backgroundColor: vide ? "#F1F5F9" : it.bg,
+            border: `1px solid ${vide ? "#E2E8F0" : it.border}`,
+          }}>
+            <span style={{ width: 7, height: 7, borderRadius: "50%", backgroundColor: vide ? "#CBD5E1" : it.color }} />
+            {it.n} {it.label}
+          </span>
+        );
+      })}
     </div>
   );
 }
@@ -46,7 +78,6 @@ export default function PageEtudiants({ onSelectEtudiant }) {
   const [filtreFiliere, setFiltreFiliere] = useState("Tous");
   const [filtreAnnee, setFiltreAnnee]     = useState("Tous");
   const [filtreModule, setFiltreModule]   = useState("Tous");
-  const [filtreRisque, setFiltreRisque]   = useState("Tous");
   const [filtreStatut, setFiltreStatut]   = useState("Tous");
   const [search, setSearch]               = useState("");
 
@@ -73,7 +104,6 @@ export default function PageEtudiants({ onSelectEtudiant }) {
     if (filtreModule !== "Tous") {
       if (!(e.modules ?? []).some(m => m.module === filtreModule)) return false;
     }
-    if (filtreRisque !== "Tous" && e.niveau_risque !== filtreRisque) return false;
     if (filtreStatut !== "Tous") {
       const globalSt = e.nb_modules_exclu > 0 ? "EXCLU" : e.nb_modules_averti > 0 ? "AVERTI" : "AUTORISE";
       if (globalSt !== filtreStatut) return false;
@@ -87,13 +117,12 @@ export default function PageEtudiants({ onSelectEtudiant }) {
 
   const hasActiveFilters =
     filtreFiliere !== "Tous" || filtreAnnee !== "Tous" || filtreModule !== "Tous" ||
-    filtreRisque !== "Tous" || filtreStatut !== "Tous" || search !== "";
+    filtreStatut !== "Tous" || search !== "";
 
   function resetFilters() {
     setFiltreFiliere("Tous");
     setFiltreAnnee("Tous");
     setFiltreModule("Tous");
-    setFiltreRisque("Tous");
     setFiltreStatut("Tous");
     setSearch("");
   }
@@ -128,15 +157,11 @@ export default function PageEtudiants({ onSelectEtudiant }) {
           </select>
         </div>
 
-        {/* Ligne 2 : boutons risque + statut + reset + compteur */}
+        {/* Ligne 2 : boutons statut + reset + compteur */}
         <div style={{ display: "flex", flexWrap: "wrap", gap: 12, alignItems: "center" }}>
           <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
-            <span style={{ fontSize: 11, color: "#64748b", marginRight: 4, fontWeight: 600 }}>RISQUE</span>
-            {RISQUES.map(r => <FilterBtn key={r} active={filtreRisque === r} onClick={() => setFiltreRisque(r)}>{r}</FilterBtn>)}
-          </div>
-          <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
             <span style={{ fontSize: 11, color: "#64748b", marginRight: 4, fontWeight: 600 }}>STATUT</span>
-            {STATUTS_F.map(s => <FilterBtn key={s} active={filtreStatut === s} onClick={() => setFiltreStatut(s)}>{s}</FilterBtn>)}
+            {STATUTS_F.map(s => <FilterBtn key={s} active={filtreStatut === s} onClick={() => setFiltreStatut(s)}>{LABEL_STATUT[s] ?? s}</FilterBtn>)}
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 12, marginLeft: "auto" }}>
             {hasActiveFilters && (
@@ -157,13 +182,12 @@ export default function PageEtudiants({ onSelectEtudiant }) {
       <div style={{ backgroundColor: "#FFFFFF", border: "1px solid #E2E8F0", borderRadius: 8, overflow: "auto", boxShadow: "0 1px 3px rgba(0,0,0,0.08)" }}>
         <table style={{ width: "100%", borderCollapse: "collapse" }}>
           <thead>
-            <tr>{["Nom", "Filière", "Abs. NJ", "Score", "Risque", "Moyenne", "Mods ⚠", "Statut"].map(h => <th key={h} style={S.th}>{h}</th>)}</tr>
+            <tr>{["Nom", "Filière", "Abs. NJ", "Moy. Brute", "Moy. Nette", "Mods ⚠", "Statut"].map(h => <th key={h} style={S.th}>{h}</th>)}</tr>
           </thead>
           <tbody>
             {displayed.length === 0
-              ? <tr><td colSpan={8} style={{ ...S.td, textAlign: "center", color: "#64748b" }}>Aucun résultat</td></tr>
+              ? <tr><td colSpan={7} style={{ ...S.td, textAlign: "center", color: "#64748b" }}>Aucun résultat</td></tr>
               : displayed.map((e, i) => {
-                const globalSt = e.nb_modules_exclu > 0 ? "EXCLU" : e.nb_modules_averti > 0 ? "AVERTI" : "AUTORISE";
                 return (
                   <tr
                     key={e.id_etudiant}
@@ -178,19 +202,12 @@ export default function PageEtudiants({ onSelectEtudiant }) {
                     </td>
                     <td style={{ ...S.td, color: "#64748b", fontSize: 12 }}>{e.annee}</td>
                     <td style={{ ...S.td, color: "#d97706", fontWeight: 600 }}>{e.total_abs_nj}</td>
-                    <td style={{ ...S.td, fontWeight: 700, color: e.score_global >= 70 ? "#dc2626" : e.score_global >= 40 ? "#d97706" : "#5a9e14" }}>
-                      {e.score_global}
-                    </td>
-                    <td style={{ ...S.td, fontSize: 12, color: e.niveau_risque === "critique" ? "#dc2626" : e.niveau_risque === "modéré" ? "#d97706" : "#5a9e14", fontWeight: 500, textTransform: "capitalize" }}>
-                      {e.niveau_risque}
-                    </td>
-                    <td style={{ ...S.td, color: "#64748b" }}>
-                      {e.moyenne_generale ? Number(e.moyenne_generale).toFixed(2) : "—"}
-                    </td>
+                    <td style={{ ...S.td, color: "#64748b" }}>{fmtMoyenne(e.moyenne_brute)}</td>
+                    <td style={{ ...S.td, color: "#64748b" }}>{fmtMoyenne(e.moyenne_nette)}</td>
                     <td style={{ ...S.td, color: e.nb_modules_averti + e.nb_modules_exclu > 0 ? "#d97706" : "#64748b", fontWeight: 500 }}>
                       {e.nb_modules_averti + e.nb_modules_exclu}
                     </td>
-                    <td style={S.td}><StatutBadge statut={globalSt} /></td>
+                    <td style={S.td}><CompteursStatut etudiant={e} /></td>
                   </tr>
                 );
               })

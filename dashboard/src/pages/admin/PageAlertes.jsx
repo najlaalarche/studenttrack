@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { apiFetch } from "../../api.js";
 
 const BASE = "http://localhost:5050";
 
@@ -22,7 +23,7 @@ function StatutBadge({ statut }) {
       fontSize: 10, fontWeight: 700, padding: "2px 8px", borderRadius: 99,
       backgroundColor: cfg.bg, border: `1px solid ${cfg.border}`, color: cfg.color,
       textTransform: "uppercase", letterSpacing: "0.05em",
-    }}>{statut}</span>
+    }}>{statut === "AUTORISE" ? "Rien à signaler" : statut}</span>
   );
 }
 
@@ -45,7 +46,7 @@ export default function PageHistoriqueAlertes() {
   const [filtreEnvoi, setFiltreEnvoi] = useState("Tous");
 
   useEffect(() => {
-    fetch(`${BASE}/api/alertes`)
+    apiFetch(`${BASE}/api/alertes`)
       .then(r => r.json())
       .then(data => {
         if (data.erreur) throw new Error(data.erreur);

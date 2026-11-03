@@ -3,6 +3,7 @@ const NAV = [
   { key: "etudiants",            icon: "⊞", label: "Étudiants" },
   { key: "alertes",              icon: "◉", label: "Historique des Alertes" },
   { key: "importation",          icon: "↑", label: "Importation CSV" },
+  { key: "import-planning",      icon: "▦", label: "Import Planning" },
   { key: "gestion-etudiants",    icon: "✦", label: "Gestion Étudiants" },
   { key: "gestion-professeurs",  icon: "◆", label: "Gestion Professeurs" },
   { key: "sync",                 icon: "↻", label: "Synchronisation" },

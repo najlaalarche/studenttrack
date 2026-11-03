@@ -6,7 +6,7 @@ import pandas as pd
 
 ROOT = Path(__file__).resolve().parents[2]
 DB_PATH = ROOT / "data" / "studenttrack.db"
-LAST_STATE_FILE = ROOT / "data" / ".last_state.json"
+LAST_STATE_FILE = ROOT / "data" / "logs" / ".last_state.json"
 
 
 def get_connection() -> sqlite3.Connection:
@@ -81,6 +81,7 @@ def detect_delta() -> tuple:
         new_rows = df.copy()
         has_changes = True
 
+    LAST_STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
     LAST_STATE_FILE.write_text(json.dumps(list(current_ids)), encoding="utf-8")
     return new_rows, has_changes
 

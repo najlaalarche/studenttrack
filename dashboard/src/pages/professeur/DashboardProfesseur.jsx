@@ -180,7 +180,7 @@ export default function DashboardProfesseur({ professeur, onLogout }) {
           {/* Résumé */}
           <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 12, marginBottom: 24 }}>
             {[
-              { label: "Autorisés", count: counts.AUTORISE, color: "#8DC63F", border: "#8DC63F" },
+              { label: "Rien à signaler", count: counts.AUTORISE, color: "#8DC63F", border: "#8DC63F" },
               { label: "Avertis",   count: counts.AVERTI,   color: "#d97706", border: "#F59E0B" },
               { label: "Exclus",    count: counts.EXCLU,    color: "#dc2626", border: "#EF4444" },
             ].map(s => (
@@ -211,7 +211,7 @@ export default function DashboardProfesseur({ professeur, onLogout }) {
             </div>
             <div style={{ display: "flex", flexWrap: "wrap", gap: 6, alignItems: "center" }}>
               <span style={{ fontSize: 11, color: "#64748b", marginRight: 4, fontWeight: 600 }}>STATUT</span>
-              {STATUTS.map(s => <FilterBtn key={s} active={filtreStatut === s} onClick={() => setFiltreStatut(s)}>{s}</FilterBtn>)}
+              {STATUTS.map(s => <FilterBtn key={s} active={filtreStatut === s} onClick={() => setFiltreStatut(s)}>{s === "AUTORISE" ? "Rien à signaler" : s}</FilterBtn>)}
               <div style={{ display: "flex", alignItems: "center", gap: 12, marginLeft: "auto" }}>
                 {hasActiveFilters && (
                   <button onClick={resetFilters} style={{ padding: "5px 12px", borderRadius: 6, fontSize: 12, fontWeight: 500, cursor: "pointer", backgroundColor: "#FFFFFF", color: "#dc2626", border: "1px solid #fca5a5" }}>

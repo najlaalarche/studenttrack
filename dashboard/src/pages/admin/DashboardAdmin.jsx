@@ -1,16 +1,17 @@
 import { useEffect, useState } from "react";
-import { getStats, getEtudiants, postSync } from "../../api.js";
+import { getStats, getStatsTauxAbsence, postSync } from "../../api.js";
 import Sidebar from "../../components/Sidebar.jsx";
-import KpiCard from "../../components/KpiCard.jsx";
+import AbsencesModuleChart from "../../components/AbsencesModuleChart.jsx";
 import PageEtudiants from "./PageEtudiants.jsx";
 import PageAlertes from "./PageAlertes.jsx";
 import PageDetailEtudiant from "./PageDetailEtudiant.jsx";
 import PageImportation from "./PageImportation.jsx";
+import PageImportPlanning from "./PageImportPlanning.jsx";
 import PageGestionEtudiants from "./PageGestionEtudiants.jsx";
 import PageGestionProfesseurs from "./PageGestionProfesseurs.jsx";
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell,
-  PieChart, Pie, Legend,
+  PieChart, Pie, Legend, LineChart, Line,
 } from "recharts";
 
 function Spinner() {
@@ -22,21 +23,98 @@ function Spinner() {
   );
 }
 
-const CHART_CARD = { backgroundColor: "#FFFFFF", border: "1px solid #E2E8F0", borderRadius: 8, padding: "20px 20px 12px", boxShadow: "0 1px 3px rgba(0,0,0,0.06)" };
-const CHART_TITLE = { fontSize: 13, fontWeight: 700, color: "#1a3a6b", marginBottom: 16 };
+const SECTION = "bg-white rounded-xl shadow-sm p-6 mb-6";
+const VIDE = "flex items-center justify-center text-center text-sm text-gray-500";
+
+function SectionTitre({ children }) {
+  return (
+    <h3 className="mb-4 border-l-4 border-[#1e3a5f] pl-3 text-sm font-semibold uppercase tracking-wide text-gray-700">
+      {children}
+    </h3>
+  );
+}
+
+// Tuile KPI compacte : icône teintée à gauche, couleur d'accent propre à chaque indicateur
+function KpiTile({ label, value, color, icon }) {
+  return (
+    <div className="flex min-w-0 items-center gap-3 rounded-xl bg-white px-4 py-3 shadow-sm" style={{ borderLeft: `3px solid ${color}` }}>
+      <div
+        className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-base font-bold"
+        style={{ backgroundColor: `${color}1a`, color }}
+      >
+        {icon}
+      </div>
+      <div className="min-w-0">
+        <div className="truncate text-[11px] font-semibold uppercase tracking-wide text-gray-500" title={label}>{label}</div>
+        <div className="text-xl font-bold leading-tight" style={{ color }}>{value ?? "—"}</div>
+      </div>
+    </div>
+  );
+}
+
+// Une couleur fixe par filière (ordre alphabétique) ; au-delà de 8 filières, mêmes teintes en pointillés
+const COULEURS_FILIERES = ["#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4", "#008300", "#6250d6", "#e34948"];
+
+const couleurTaux = t => (t > 50 ? "#EF4444" : t >= 20 ? "#F59E0B" : "#8DC63F");
+
+const ONGLETS = [
+  { key: "general", label: "Vue générale" },
+  { key: "filiere", label: "Par filière" },
+  { key: "module",  label: "Par module" },
+];
+
+function Onglets({ actif, onChange }) {
+  return (
+    <div className="mb-6 flex gap-6 border-b border-gray-200 bg-white" role="tablist">
+      {ONGLETS.map(o => (
+        <button
+          key={o.key}
+          role="tab"
+          aria-selected={actif === o.key}
+          onClick={() => onChange(o.key)}
+          className={`-mb-px border-b-2 px-1 pb-3 pt-1 text-sm font-medium transition-colors ${
+            actif === o.key
+              ? "border-[#1e3a5f] text-[#1e3a5f]"
+              : "border-transparent text-gray-500 hover:text-gray-700"
+          }`}
+        >
+          {o.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+const TOOLTIP_STYLE = { fontSize: 12, borderRadius: 6, border: "1px solid #E2E8F0" };
+const HAUTEUR_TOP = 280;
+
+// Pourcentage écrit dans la part (positionné à mi-rayon depuis cx/cy) ; masqué sous 6 %
+const RADIAN = Math.PI / 180;
+function labelPart({ cx, cy, midAngle, innerRadius, outerRadius, percent }) {
+  if (percent < 0.06) return null;
+  const r = innerRadius + (outerRadius - innerRadius) / 2;
+  const x = cx + r * Math.cos(-midAngle * RADIAN);
+  const y = cy + r * Math.sin(-midAngle * RADIAN);
+  return (
+    <text x={x} y={y} fill="#FFFFFF" textAnchor="middle" dominantBaseline="central" fontSize={12} fontWeight={700}>
+      {Math.round(percent * 100)}%
+    </text>
+  );
+}
 
 function VueEnsemble() {
   const [stats, setStats]         = useState(null);
-  const [etudiants, setEtudiants] = useState([]);
+  const [tauxAbs, setTauxAbs]     = useState(null);
   const [error, setError]         = useState(null);
   const [loading, setLoading]     = useState(true);
+  const [onglet, setOnglet]       = useState("general");
 
   useEffect(() => {
-    Promise.all([getStats(), getEtudiants()])
-      .then(([s, e]) => {
+    Promise.all([getStats(), getStatsTauxAbsence().catch(() => null)])
+      .then(([s, t]) => {
         if (s.erreur) throw new Error();
         setStats(s);
-        setEtudiants(Array.isArray(e) ? e : []);
+        setTauxAbs(t);
       })
       .catch(() => setError("Connexion au serveur impossible. Vérifiez que le backend tourne sur le port 5050."))
       .finally(() => setLoading(false));
@@ -45,82 +123,144 @@ function VueEnsemble() {
   if (loading) return <Spinner />;
   if (error)   return <p style={{ fontSize: 13, color: "#dc2626" }}>{error}</p>;
 
-  const top10 = [...etudiants]
-    .sort((a, b) => b.score_risque - a.score_risque)
-    .slice(0, 10)
-    .map(e => ({
-      name: `${e.prenom} ${e.nom}`.length > 18 ? `${e.prenom} ${e.nom}`.substring(0, 18) + "…" : `${e.prenom} ${e.nom}`,
-      score: e.score_risque,
-      color: e.score_risque >= 70 ? "#EF4444" : e.score_risque >= 40 ? "#F59E0B" : "#8DC63F",
-    }));
+  // Taux d'absence cumulatif (planning importé) — dernière semaine disponible de chaque étudiant
+  const top10 = (tauxAbs?.top10 ?? []).map(e => ({
+    name: `${e.prenom} ${e.nom}`.length > 18 ? `${e.prenom} ${e.nom}`.substring(0, 18) + "…" : `${e.prenom} ${e.nom}`,
+    taux: e.taux_absence,
+    semaine: e.semaine,
+    color: couleurTaux(e.taux_absence),
+  }));
+  const filieres   = tauxAbs?.filieres ?? [];
+  const parFiliere = (tauxAbs?.par_filiere ?? []).map(s => ({ ...s, label: `Semaine ${s.semaine}` }));
 
   const pieData = [
-    { name: "Faible",   value: stats.faible,   color: "#8DC63F" },
-    { name: "Modéré",  value: stats.modere,   color: "#F59E0B" },
-    { name: "Critique", value: stats.critique, color: "#EF4444" },
+    { name: "Rien à signaler", value: stats.autorise, color: "#22c55e" },
+    { name: "Averti",          value: stats.averti,   color: "#eab308" },
+    { name: "Exclu",           value: stats.exclu,    color: "#ef4444" },
   ].filter(d => d.value > 0);
 
-  const total = stats.faible + stats.modere + stats.critique;
-  const renderLabel = ({ name, value }) => `${name} (${value} — ${total > 0 ? Math.round(value / total * 100) : 0}%)`;
+  const kpis = [
+    { label: "Total étudiants", value: stats.total_etudiants, color: "#2563eb", icon: "⊞" },
+    { label: "En alerte",       value: stats.total_alertes,   color: "#f97316", icon: "◉" },
+    { label: "Exclus",          value: stats.exclu,           color: "#ef4444", icon: "▲" },
+    { label: "Avertis",         value: stats.averti,          color: "#eab308", icon: "◐" },
+    { label: "Rien à signaler", value: stats.autorise,        color: "#22c55e", icon: "✓" },
+    { label: "Total abs. NJ",   value: stats.total_abs_nj,    color: "#64748b", icon: "≡" },
+  ];
 
   return (
     <div>
       <h2 style={{ fontSize: 18, fontWeight: 700, color: "#1a3a6b", marginBottom: 24 }}>Vue d'ensemble</h2>
 
-      {/* KPIs */}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 12, marginBottom: 12 }}>
-        <KpiCard label="Total étudiants"  value={stats.total_etudiants} color="#1a3a6b" icon="⊞" />
-        <KpiCard label="En alerte"        value={stats.total_alertes}   color="#F59E0B" icon="◉" />
-        <KpiCard label="Niveau critique"  value={stats.critique}        color="#EF4444" icon="▲" />
-      </div>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 12, marginBottom: 28 }}>
-        <KpiCard label="Niveau modéré"   value={stats.modere}          color="#F59E0B" icon="◐" />
-        <KpiCard label="Niveau faible"   value={stats.faible}          color="#8DC63F" icon="◯" />
-        <KpiCard label="Total abs. NJ"   value={stats.total_abs_nj}    color="#64748b" icon="≡" />
+      {/* KPIs — une seule ligne */}
+      <div className="mb-6 grid grid-cols-6 gap-4">
+        {kpis.map(k => <KpiTile key={k.label} {...k} />)}
       </div>
 
-      {/* Graphiques */}
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+      <Onglets actif={onglet} onChange={setOnglet} />
 
-        {/* Bar chart Top 10 */}
-        <div style={CHART_CARD}>
-          <div style={CHART_TITLE}>Top étudiants à risque</div>
-          <ResponsiveContainer width="100%" height={280}>
-            <BarChart data={top10} layout="vertical" margin={{ top: 0, right: 20, bottom: 0, left: 10 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#E2E8F0" horizontal={false} />
-              <XAxis type="number" domain={[0, 100]} tick={{ fill: "#64748b", fontSize: 11 }} unit="" />
-              <YAxis type="category" dataKey="name" width={130} tick={{ fill: "#1e293b", fontSize: 11 }} />
-              <Tooltip formatter={(v) => [`${v}/100`, "Score risque"]} contentStyle={{ fontSize: 12, borderRadius: 6, border: "1px solid #E2E8F0" }} />
-              <Bar dataKey="score" radius={[0, 4, 4, 0]} maxBarSize={18}>
-                {top10.map((e, i) => <Cell key={i} fill={e.color} />)}
-              </Bar>
-            </BarChart>
+      {/* Onglet 1 — Top 10 + répartition */}
+      {onglet === "general" && (
+      <div className="mb-6 grid grid-cols-2 gap-6">
+        <section className="rounded-xl bg-white p-6 shadow-sm">
+          <SectionTitre>Top 10 — taux d'absence cumulatif</SectionTitre>
+          {top10.length === 0 ? (
+            <div className={VIDE} style={{ height: HAUTEUR_TOP }}>Aucune donnée de planning disponible</div>
+          ) : (
+            <ResponsiveContainer width="100%" height={HAUTEUR_TOP}>
+              <BarChart data={top10} layout="vertical" margin={{ top: 0, right: 20, bottom: 0, left: 10 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#E2E8F0" horizontal={false} />
+                <XAxis type="number" domain={[0, 100]} tick={{ fill: "#64748b", fontSize: 11 }} unit="%" />
+                <YAxis type="category" dataKey="name" width={130} tick={{ fill: "#1e293b", fontSize: 11 }} />
+                <Tooltip
+                  formatter={(v) => [`${v}%`, "Taux d'absence cumulatif"]}
+                  labelFormatter={(name, p) => p?.[0] ? `${name} — semaine ${p[0].payload.semaine}` : name}
+                  contentStyle={TOOLTIP_STYLE}
+                />
+                <Bar dataKey="taux" radius={[0, 4, 4, 0]} maxBarSize={18}>
+                  {top10.map((e, i) => <Cell key={i} fill={e.color} />)}
+                </Bar>
+              </BarChart>
+            </ResponsiveContainer>
+          )}
+        </section>
+
+        <section className="rounded-xl bg-white p-6 shadow-sm">
+          <SectionTitre>Répartition des statuts</SectionTitre>
+          {pieData.length === 0 ? (
+            <div className={VIDE} style={{ height: HAUTEUR_TOP }}>Aucun étudiant</div>
+          ) : (
+            <ResponsiveContainer width="100%" height={HAUTEUR_TOP}>
+              <PieChart>
+                <Pie
+                  data={pieData}
+                  cx="50%"
+                  cy="45%"
+                  outerRadius={100}
+                  dataKey="value"
+                  nameKey="name"
+                  label={labelPart}
+                  labelLine={false}
+                  stroke="#FFFFFF"
+                  strokeWidth={2}
+                >
+                  {pieData.map((d, i) => <Cell key={i} fill={d.color} />)}
+                </Pie>
+                <Tooltip formatter={(v, name) => [`${v} étudiant(s)`, name]} contentStyle={TOOLTIP_STYLE} />
+                <Legend
+                  verticalAlign="bottom"
+                  iconType="circle"
+                  wrapperStyle={{ fontSize: 12 }}
+                  formatter={(name, entry) => <span style={{ color: "#334155" }}>{name} ({entry.payload.value})</span>}
+                />
+              </PieChart>
+            </ResponsiveContainer>
+          )}
+        </section>
+      </div>
+      )}
+
+      {/* Onglet 2 — évolution par filière, pleine largeur */}
+      {onglet === "filiere" && (
+      <section className={SECTION}>
+        <SectionTitre>Évolution du taux d'absence par filière</SectionTitre>
+        {parFiliere.length === 0 ? (
+          <div className={VIDE} style={{ height: 350 }}>Aucune donnée de planning disponible pour le moment.</div>
+        ) : (
+          <ResponsiveContainer width="100%" height={350}>
+            <LineChart data={parFiliere} margin={{ top: 8, right: 20, bottom: 0, left: -8 }}>
+              <CartesianGrid stroke="#E2E8F0" strokeDasharray="3 3" vertical={false} />
+              <XAxis dataKey="label" tick={{ fill: "#64748b", fontSize: 11 }} tickLine={false} axisLine={{ stroke: "#E2E8F0" }} />
+              <YAxis domain={[0, 100]} ticks={[0, 25, 50, 75, 100]} tickFormatter={v => `${v}%`} tick={{ fill: "#64748b", fontSize: 11 }} tickLine={false} axisLine={false} />
+              <Tooltip
+                formatter={(v, name) => [`${v}%`, name]}
+                itemSorter={item => -item.value}
+                cursor={{ stroke: "#CBD5E1", strokeDasharray: "3 3" }}
+                contentStyle={TOOLTIP_STYLE}
+              />
+              <Legend verticalAlign="top" align="right" iconType="plainline" wrapperStyle={{ fontSize: 12, paddingBottom: 12 }} />
+              {filieres.map((f, i) => (
+                <Line
+                  key={f}
+                  type="monotone"
+                  dataKey={f}
+                  name={f}
+                  stroke={COULEURS_FILIERES[i % COULEURS_FILIERES.length]}
+                  strokeDasharray={i >= COULEURS_FILIERES.length ? "6 4" : undefined}
+                  strokeWidth={2}
+                  dot={{ r: 3, strokeWidth: 2, fill: "#FFFFFF" }}
+                  activeDot={{ r: 5, stroke: "#FFFFFF", strokeWidth: 2 }}
+                  connectNulls
+                />
+              ))}
+            </LineChart>
           </ResponsiveContainer>
-        </div>
+        )}
+      </section>
+      )}
 
-        {/* Pie chart répartition */}
-        <div style={CHART_CARD}>
-          <div style={CHART_TITLE}>Répartition des risques</div>
-          <ResponsiveContainer width="100%" height={280}>
-            <PieChart>
-              <Pie
-                data={pieData}
-                cx="50%"
-                cy="45%"
-                outerRadius={90}
-                dataKey="value"
-                label={renderLabel}
-                labelLine={true}
-              >
-                {pieData.map((d, i) => <Cell key={i} fill={d.color} />)}
-              </Pie>
-              <Tooltip formatter={(v) => [`${v} étudiant(s)`, ""]} contentStyle={{ fontSize: 12, borderRadius: 6, border: "1px solid #E2E8F0" }} />
-              <Legend wrapperStyle={{ fontSize: 12, paddingTop: 8 }} />
-            </PieChart>
-          </ResponsiveContainer>
-        </div>
-
-      </div>
+      {/* Onglet 3 — absences hebdomadaires par module */}
+      {onglet === "module" && <AbsencesModuleChart />}
     </div>
   );
 }
@@ -184,6 +324,7 @@ export default function DashboardAdmin({ onLogout, initialPage = "overview", onP
         {page === "etudiants"         && !selected && <PageEtudiants onSelectEtudiant={id => setSelected(id)} />}
         {page === "alertes"           && !selected && <PageAlertes />}
         {page === "importation"       && !selected && <PageImportation />}
+        {page === "import-planning"   && !selected && <PageImportPlanning />}
         {page === "gestion-etudiants"    && !selected && <PageGestionEtudiants />}
         {page === "gestion-professeurs"  && !selected && <PageGestionProfesseurs />}
         {page === "sync"                 && !selected && <PageSync />}

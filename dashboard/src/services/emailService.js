@@ -37,7 +37,6 @@ export async function sendAlert({ etudiant, module, taux, seuil, destinataire, t
     module_name:   module,
     taux_absence:  `${taux}%`,
     seuil:         `${seuil}%`,
-    score_global:  etudiant.score_global,
     date_alerte:   new Date().toLocaleDateString('fr-FR'),
   }
 

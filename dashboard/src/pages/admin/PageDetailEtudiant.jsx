@@ -24,7 +24,7 @@ function Spinner() {
   );
 }
 
-function RiskRadar({ profil }) {
+function ModulesRadar({ profil }) {
   const mods  = profil.modules || [];
   const maxNj = mods.length > 0 ? Math.max(...mods.map(m => m.taux_nj)) : 0;
   const color = maxNj >= 50 ? "#EF4444" : maxNj >= 20 ? "#F59E0B" : "#8DC63F";
@@ -94,7 +94,6 @@ export default function PageDetailEtudiant({ id_etudiant, onBack }) {
 
   const { profil: p, absences = [], notes = [] } = data;
   const globalStatut = p.nb_modules_exclu > 0 ? "EXCLU" : p.nb_modules_averti > 0 ? "AVERTI" : "AUTORISE";
-  const scoreColor   = p.score_global >= 70 ? "#dc2626" : p.score_global >= 40 ? "#d97706" : "#5a9e14";
 
   return (
     <div>
@@ -112,29 +111,18 @@ export default function PageDetailEtudiant({ id_etudiant, onBack }) {
           <div style={{ fontSize: 13, color: "#64748b" }}>{p.email}</div>
           <div style={{ fontSize: 12, color: "#94a3b8", marginTop: 2 }}>{p.filiere} · {p.annee} · {p.cursus}</div>
         </div>
-        {p.niveau_risque_scoring && (
-          <div style={{
-            padding: "6px 14px", borderRadius: 6, fontSize: 12, fontWeight: 600,
-            backgroundColor: p.niveau_risque_scoring === "ROUGE" ? "rgba(239,68,68,0.1)" : p.niveau_risque_scoring === "ORANGE" ? "rgba(245,158,11,0.1)" : "rgba(141,198,63,0.1)",
-            color: p.niveau_risque_scoring === "ROUGE" ? "#dc2626" : p.niveau_risque_scoring === "ORANGE" ? "#d97706" : "#5a9e14",
-            border: `1px solid ${p.niveau_risque_scoring === "ROUGE" ? "rgba(239,68,68,0.3)" : p.niveau_risque_scoring === "ORANGE" ? "rgba(245,158,11,0.3)" : "rgba(141,198,63,0.3)"}`,
-          }}>
-            {p.niveau_risque_scoring}
-          </div>
-        )}
       </div>
 
       {/* KPIs + Radar */}
       <div style={{ display: "flex", gap: 16, marginBottom: 24, alignItems: "stretch" }}>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 12, flex: 1 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: 12, flex: 1 }}>
           <KpiCard label="Abs. NJ"        value={p.total_abs_nj}       color="#d97706" icon="⚠" />
           <KpiCard label="Abs. just."     value={p.total_abs_just}     color="#8DC63F" icon="✓" />
-          <KpiCard label="Score risque"   value={`${p.score_global}/100`} color={scoreColor} icon="◎" />
           <KpiCard label="Moyenne"        {...moyenneKpi(p.moyenne_generale)} icon="◐" />
           <KpiCard label="Total absences" value={p.total_absences}     color="#64748b" icon="≡" />
         </div>
         <div style={{ width: 280, flexShrink: 0 }}>
-          <RiskRadar profil={p} />
+          <ModulesRadar profil={p} />
         </div>
       </div>
 

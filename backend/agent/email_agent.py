@@ -98,7 +98,6 @@ def _normalize_student(etudiant):
             "nom": str(etudiant.get("nom", "")),
             "email": str(etudiant.get("email", "")),
             "filiere": str(etudiant.get("filiere", "")),
-            "score_global": etudiant.get("score_global", 0),
             "annee_scolaire": etudiant.get("annee_scolaire", "2024-2025"),
             "modules": etudiant.get("modules", []),
         }
@@ -108,7 +107,6 @@ def _normalize_student(etudiant):
         "nom": str(getattr(etudiant, "nom", "")),
         "email": str(getattr(etudiant, "email", "")),
         "filiere": str(getattr(etudiant, "filiere", "")),
-        "score_global": getattr(etudiant, "score_global", 0),
         "annee_scolaire": getattr(etudiant, "annee", "2024-2025"),
         "modules": getattr(etudiant, "modules", []),
     }
@@ -141,7 +139,6 @@ def _build_template_data(student, module_name, taux, seuil):
         "module_name": module_name,
         "taux_absence": f"{taux}%",
         "seuil": f"{seuil}%",
-        "score_global": student.get("score_global", 0),
         "date_alerte": datetime.now().strftime("%Y-%m-%d"),
         "annee_scolaire": student.get("annee_scolaire", "2024-2025"),
     }

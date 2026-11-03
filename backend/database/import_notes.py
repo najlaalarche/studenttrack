@@ -10,7 +10,7 @@ Seule la colonne "Moyenne" est importée.
 Liaison : Nom + Prénom normalisés dans la même filière (1 candidat → lié).
 Aucun candidat → étudiant créé automatiquement. Homonymes → rapprochement_a_valider.csv.
 
-Usage : python backend/database/import_notes.py data/notes_ims_avec_donnees.xlsx
+Usage : python backend/database/import_notes.py data/samples/notes_ims_avec_donnees.xlsx
 """
 import csv
 import re
@@ -21,7 +21,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 DB_PATH = ROOT / "data" / "studenttrack.db"
-RAPPROCHEMENT_CSV = ROOT / "data" / "rapprochement_a_valider.csv"
+RAPPROCHEMENT_CSV = ROOT / "data" / "logs" / "rapprochement_a_valider.csv"
 
 _STOPWORDS = {"ingenieur", "et", "des", "de", "du", "la", "le", "les", "en", "d", "l", "a"}
 
@@ -301,6 +301,7 @@ def import_notes(path, source_name: str | None = None, db_path=None, csv_path=No
     conn.close()
 
     if a_valider:
+        Path(csv_path).parent.mkdir(parents=True, exist_ok=True)
         with open(csv_path, "w", newline="", encoding="utf-8-sig") as f:
             w = csv.DictWriter(f, delimiter=";", fieldnames=[
                 "matricule", "nom", "prenom", "moyenne", "raison", "candidats_proposes"])
@@ -315,5 +316,5 @@ def import_notes(path, source_name: str | None = None, db_path=None, csv_path=No
 
 if __name__ == "__main__":
     import json
-    fichier = sys.argv[1] if len(sys.argv) > 1 else ROOT / "data" / "notes_ims_avec_donnees.xlsx"
+    fichier = sys.argv[1] if len(sys.argv) > 1 else ROOT / "data" / "samples" / "notes_ims_avec_donnees.xlsx"
     print(json.dumps(import_notes(fichier), ensure_ascii=False, indent=2))

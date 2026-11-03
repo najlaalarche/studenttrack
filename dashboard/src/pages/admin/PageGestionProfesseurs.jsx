@@ -1,4 +1,5 @@
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
+import { apiFetch, importProfesseursCsv } from "../../api.js";
 
 const BASE = "http://localhost:5050";
 
@@ -92,9 +93,12 @@ export default function PageGestionProfesseurs() {
   const [liste, setListe]                         = useState([]);
   const [search, setSearch]                       = useState("");
   const [loading, setLoading]                     = useState(true);
+  const [importing, setImporting]                 = useState(false);
+  const [importResult, setImportResult]           = useState(null);
+  const fileInput                                 = useRef(null);
 
   useEffect(() => {
-    fetch(`${BASE}/api/modules/all`)
+    apiFetch(`${BASE}/api/modules/all`)
       .then(r => r.json())
       .then(data => setAllModules(Array.isArray(data) ? data : []))
       .catch(() => {});
@@ -102,7 +106,7 @@ export default function PageGestionProfesseurs() {
 
   const loadList = useCallback(() => {
     setLoading(true);
-    fetch(`${BASE}/api/professeurs`)
+    apiFetch(`${BASE}/api/professeurs`)
       .then(r => r.json())
       .then(data => setListe(Array.isArray(data) ? data : []))
       .catch(() => {})
@@ -155,7 +159,7 @@ export default function PageGestionProfesseurs() {
       const body   = { nom: form.nom.trim(), prenom: form.prenom.trim(), module_ids: [...selectedModuleIds] };
       const url    = editingId ? `${BASE}/api/professeurs/${editingId}` : `${BASE}/api/professeurs/ajouter`;
       const method = editingId ? "PUT" : "POST";
-      const res    = await fetch(url, {
+      const res    = await apiFetch(url, {
         method,
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
@@ -189,7 +193,7 @@ export default function PageGestionProfesseurs() {
     if (!window.confirm(`Réinitialiser le mot de passe de ${prof.prenom} ${prof.nom} et envoyer un email ?`)) return;
     setResettingId(prof.id);
     try {
-      const res = await fetch(`${BASE}/api/professeurs/${prof.id}/reset-password`, { method: "POST" }).then(r => r.json());
+      const res = await apiFetch(`${BASE}/api/professeurs/${prof.id}/reset-password`, { method: "POST" }).then(r => r.json());
       if (res.success) {
         setMsg({
           type: "success",
@@ -207,10 +211,27 @@ export default function PageGestionProfesseurs() {
     }
   }
 
+  async function handleImportCsv(e) {
+    const file = e.target.files?.[0];
+    e.target.value = "";  // permet de ré-importer le même fichier
+    if (!file) return;
+    setImporting(true);
+    setImportResult(null);
+    try {
+      const res = await importProfesseursCsv(file);
+      setImportResult(res.success ? res : { error: res.error || "Erreur lors de l'import" });
+      if (res.success) loadList();
+    } catch {
+      setImportResult({ error: "Erreur de connexion au serveur." });
+    } finally {
+      setImporting(false);
+    }
+  }
+
   async function handleDelete(prof) {
     if (!window.confirm(`Supprimer ${prof.prenom} ${prof.nom} et retirer tous ses modules ?`)) return;
     try {
-      const res = await fetch(`${BASE}/api/professeurs/${prof.id}`, { method: "DELETE" }).then(r => r.json());
+      const res = await apiFetch(`${BASE}/api/professeurs/${prof.id}`, { method: "DELETE" }).then(r => r.json());
       if (res.success) {
         setMsg({ type: "success", text: `✓ ${prof.prenom} ${prof.nom} supprimé.` });
         if (editingId === prof.id) resetForm();
@@ -225,7 +246,51 @@ export default function PageGestionProfesseurs() {
 
   return (
     <div>
-      <h2 style={{ fontSize: 18, fontWeight: 700, color: "#1a3a6b", marginBottom: 24 }}>Gestion des Professeurs</h2>
+      <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 24 }}>
+        <h2 style={{ fontSize: 18, fontWeight: 700, color: "#1a3a6b", margin: 0 }}>Gestion des Professeurs</h2>
+        <input ref={fileInput} type="file" accept=".csv,text/csv" onChange={handleImportCsv} style={{ display: "none" }} />
+        <button
+          onClick={() => fileInput.current?.click()}
+          disabled={importing}
+          title="Colonnes attendues : nom, prenom, email, module, filiere"
+          style={{
+            marginLeft: "auto", padding: "8px 16px", borderRadius: 6, fontSize: 13, fontWeight: 600,
+            cursor: importing ? "not-allowed" : "pointer",
+            backgroundColor: importing ? "#E2E8F0" : "#FFFFFF",
+            color: importing ? "#64748b" : "#1a3a6b", border: "1px solid rgba(26,58,107,0.35)",
+          }}
+        >
+          {importing ? "Import en cours…" : "⇪ Importer CSV"}
+        </button>
+      </div>
+
+      {importResult && (
+        <div style={{
+          marginBottom: 20, padding: "12px 16px", borderRadius: 6, fontSize: 13,
+          backgroundColor: MSG_STYLE[importResult.error ? "error" : "success"].bg,
+          border: `1px solid ${MSG_STYLE[importResult.error ? "error" : "success"].border}`,
+          color: MSG_STYLE[importResult.error ? "error" : "success"].color,
+          position: "relative",
+        }}>
+          <button onClick={() => setImportResult(null)} aria-label="Fermer" style={{ position: "absolute", top: 6, right: 8, border: "none", background: "transparent", cursor: "pointer", color: "inherit", fontSize: 14 }}>×</button>
+          {importResult.error ? importResult.error : (
+            <>
+              <div style={{ fontWeight: 600 }}>
+                ✓ {importResult.ajoutes} professeur{importResult.ajoutes !== 1 ? "s" : ""} ajouté{importResult.ajoutes !== 1 ? "s" : ""}, {importResult.ignores} déjà existant{importResult.ignores !== 1 ? "s" : ""} ignoré{importResult.ignores !== 1 ? "s" : ""}.
+              </div>
+              {[
+                ["⚠ Email non envoyé (vérifiez Brevo)", importResult.emails_echoues],
+                ["⚠ Modules introuvables", importResult.modules_introuvables],
+                ["⚠ Lignes rejetées", importResult.erreurs],
+              ].filter(([, l]) => l?.length).map(([titre, l]) => (
+                <div key={titre} style={{ marginTop: 8, fontSize: 12, color: "#b45309" }}>
+                  {titre} : {l.join(", ")}
+                </div>
+              ))}
+            </>
+          )}
+        </div>
+      )}
 
       {/* Formulaire */}
       <div style={{ backgroundColor: "#FFFFFF", border: "1px solid #E2E8F0", borderRadius: 8, padding: 24, marginBottom: 28, boxShadow: "0 1px 3px rgba(0,0,0,0.08)", maxWidth: 560 }}>

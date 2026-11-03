@@ -18,6 +18,9 @@ data/studenttrack.db
 data/*.db
 backend/data/passwords.json
 data/emails_log.json
+data/backups/
+data/logs/
+data/samples/*.xlsx
 .env
 
 # Logs

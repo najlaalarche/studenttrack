@@ -36,6 +36,17 @@ from backend.agent.email_agent import init_alerts_db, process_student_alerts, ge
 from backend.database.import_notes import (
     import_notes, preview_notes, ensure_notes_schema, cle_nom, id_inscription_provisoire,
 )
+from backend.database.import_planning import (
+    import_planning, resume_planning, ensure_planning_schema, get_date_debut, numero_semaine,
+)
+from backend.database.import_performance import (
+    import_performance, performance_etudiant, ensure_performance_schema, annee_scolaire_courante,
+    moyennes_par_etudiant,
+)
+from backend.analysis.indicateurs import taux_absence_cumulatif, taux_absence_global
+from backend.api.auth import (
+    create_token, require_auth, require_role, public, acces_etudiant_refuse, verifier_protection,
+)
 
 app = Flask(__name__)
 CORS(app)
@@ -100,6 +111,8 @@ _init_professeurs()
 
 _conn = sqlite3.connect(DB_PATH)
 ensure_notes_schema(_conn)
+ensure_planning_schema(_conn)
+ensure_performance_schema(_conn)
 _conn.close()
 
 
@@ -353,6 +366,8 @@ def _login_db(email: str, password: str) -> dict:
 # ── Routes — Stats / Profils ──────────────────────────────────────────────────
 
 @app.route("/api/stats")
+@require_auth
+@require_role("admin")
 def stats():
     df_abs, profils = _get_data()
     if not profils:
@@ -361,23 +376,92 @@ def stats():
     return jsonify({
         "total_etudiants": len(profils),
         "total_alertes":   len(alertes),
-        "critique": sum(1 for p in profils if p.niveau_risque == "critique"),
-        "modere":   sum(1 for p in profils if p.niveau_risque == "modéré"),
-        "faible":   sum(1 for p in profils if p.niveau_risque == "faible"),
+        "exclu":    sum(1 for p in profils if p.nb_modules_exclu > 0),
+        "averti":   sum(1 for p in profils if p.nb_modules_exclu == 0 and p.nb_modules_averti > 0),
+        "autorise": sum(1 for p in profils if p.nb_modules_exclu == 0 and p.nb_modules_averti == 0),
         "total_abs_nj": sum(p.total_abs_nj for p in profils),
     })
 
 
+@app.route("/api/stats/taux-absence")
+@require_auth
+@require_role("admin")
+def stats_taux_absence():
+    conn = _db()
+    try:
+        return jsonify(taux_absence_global(conn))
+    finally:
+        conn.close()
+
+
 @app.route("/api/etudiants")
+@require_auth
+@require_role("professeur")
 def etudiants():
     df_abs, profils = _get_data()
     if not profils:
         return jsonify({"erreur": "Base SQLite vide ou introuvable"}), 404
-    return jsonify(_serialize(profils))
+    conn = _db()
+    try:
+        moyennes = moyennes_par_etudiant(conn)
+    finally:
+        conn.close()
+    result = _serialize(profils)
+    for e in result:
+        m = moyennes.get(int(e["id_etudiant"]), {})
+        e["moyenne_brute"] = m.get("moyenne_brute")
+        e["moyenne_nette"] = m.get("moyenne_nette")
+    return jsonify(result)
+
+
+_SEMAINES_SEMESTRE = {"1": (1, 16), "2": (17, 32)}
+
+
+@app.route("/api/absences/par-semaine")
+@require_auth
+@require_role("admin")
+def absences_par_semaine():
+    """Heures d'absence (justifiées + NJ) d'un module, groupées par semaine scolaire.
+    semestre=1 -> semaines 1→16, semestre=2 -> semaines 17→32 ; toutes les semaines sont renvoyées."""
+    module   = (request.args.get("module")  or "").strip()
+    filiere  = (request.args.get("filiere") or "").strip()
+    semestre = (request.args.get("semestre") or "1").strip().upper().lstrip("S")
+    if not module:
+        return jsonify({"erreur": "Paramètre module requis"}), 400
+    if semestre not in _SEMAINES_SEMESTRE:
+        return jsonify({"erreur": "Paramètre semestre invalide (1 ou 2)"}), 400
+    debut_sem, fin_sem = _SEMAINES_SEMESTRE[semestre]
+    conn = _db()
+    try:
+        ensure_planning_schema(conn)
+        debut = get_date_debut(conn)
+        rows = conn.execute(
+            """SELECT a.date_absence, a.duree_heures
+               FROM absences a
+               JOIN etudiants e ON a.id_etudiant = e.id
+               LEFT JOIN modules  m ON a.id_module = m.id
+               LEFT JOIN filieres f ON f.id = COALESCE(m.id_filiere, e.id_filiere)
+               WHERE COALESCE(m.nom, a.module_nom) = ? AND (? = '' OR f.code = ?)""",
+            (module, filiere, filiere),
+        ).fetchall()
+    finally:
+        conn.close()
+    heures = defaultdict(float)
+    for d, duree in rows:
+        try:
+            semaine = numero_semaine(datetime.fromisoformat(str(d)[:10]).date(), debut)
+        except ValueError:
+            continue
+        heures[semaine] += duree or 0
+    return jsonify([{"semaine": str(s), "heures": round(heures.get(s, 0), 2)}
+                    for s in range(debut_sem, fin_sem + 1)])
 
 
 @app.route("/api/etudiant/<id_etudiant>")
+@require_auth
 def etudiant(id_etudiant: str):
+    if acces_etudiant_refuse(id_etudiant):
+        return jsonify({"erreur": "Accès refusé"}), 403
     df_abs, profils = _get_data()
     if not profils:
         return jsonify({"erreur": "Base SQLite vide ou introuvable"}), 404
@@ -407,12 +491,51 @@ def etudiant(id_etudiant: str):
     for n in notes:
         n["statut"] = "Validé" if n["moyenne_generale"] >= 10 else "Non validé"
 
-    return jsonify({"profil": _serialize(profil), "absences": absences, "notes": notes, "scoring": {}})
+    return jsonify({"profil": _serialize(profil), "absences": absences, "notes": notes})
+
+
+def _etudiant_existe(conn, id_etudiant: str) -> bool:
+    return id_etudiant.isdigit() and conn.execute(
+        "SELECT 1 FROM etudiants WHERE id=?", (int(id_etudiant),)
+    ).fetchone() is not None
+
+
+@app.route("/api/etudiant/<id_etudiant>/taux-absence")
+@require_auth
+def etudiant_taux_absence(id_etudiant: str):
+    if acces_etudiant_refuse(id_etudiant):
+        return jsonify({"erreur": "Accès refusé"}), 403
+    conn = _db()
+    try:
+        if not _etudiant_existe(conn, id_etudiant):
+            return jsonify({"erreur": "Étudiant non trouvé"}), 404
+        return jsonify(taux_absence_cumulatif(conn, int(id_etudiant))["semaines"])
+    finally:
+        conn.close()
+
+
+@app.route("/api/etudiant/<id_etudiant>/performance")
+@require_auth
+def etudiant_performance(id_etudiant: str):
+    if acces_etudiant_refuse(id_etudiant):
+        return jsonify({"erreur": "Accès refusé"}), 403
+    conn = _db()
+    try:
+        if not _etudiant_existe(conn, id_etudiant):
+            return jsonify({"erreur": "Étudiant non trouvé"}), 404
+        perf = performance_etudiant(conn, int(id_etudiant))
+        if perf is None:
+            return jsonify({"erreur": "Aucune moyenne brute/nette importée pour cet étudiant"}), 404
+        return jsonify(perf)
+    finally:
+        conn.close()
 
 
 # ── Routes — Alertes (historique, lecture seule) ──────────────────────────────
 
 @app.route("/api/alertes")
+@require_auth
+@require_role("admin")
 def alertes():
     """Historique des alertes — lecture seule, pas d'envoi à chaque GET."""
     conn = _db()
@@ -480,6 +603,8 @@ def alertes():
 # ── Routes — Import CSV absences ──────────────────────────────────────────────
 
 @app.route("/api/import-absences-csv", methods=["POST"])
+@require_auth
+@require_role("admin")
 def import_absences_csv():
     if "file" not in request.files:
         return jsonify({"error": "Aucun fichier fourni"}), 400
@@ -727,6 +852,8 @@ def import_absences_csv():
 # ── Routes — Gestion étudiants ────────────────────────────────────────────────
 
 @app.route("/api/sessions-programme")
+@require_auth
+@require_role("admin")
 def sessions_programme():
     """Retourne les session_programme distincts depuis etudiants (rétrocompat)."""
     conn = _db()
@@ -740,6 +867,8 @@ def sessions_programme():
 
 
 @app.route("/api/session-programmes")
+@require_auth
+@require_role("admin")
 def session_programmes_list():
     """Retourne les 27 filières comme options de session — source unique pour le formulaire."""
     conn = _db()
@@ -754,6 +883,8 @@ def session_programmes_list():
 
 
 @app.route("/api/etudiants/paginated")
+@require_auth
+@require_role("admin")
 def etudiants_paginated():
     page   = max(1, int(request.args.get("page",  1)))
     limit  = max(1, min(100, int(request.args.get("limit", 20))))
@@ -798,6 +929,8 @@ def etudiants_paginated():
 
 
 @app.route("/api/etudiants/ajouter", methods=["POST"])
+@require_auth
+@require_role("admin")
 def etudiants_ajouter():
     p            = request.get_json(silent=True) or {}
     nom          = (p.get("nom")   or "").strip()
@@ -849,6 +982,8 @@ def etudiants_ajouter():
 
 
 @app.route("/api/etudiants/<int:et_id>", methods=["PUT"])
+@require_auth
+@require_role("admin")
 def etudiants_update(et_id: int):
     p            = request.get_json(silent=True) or {}
     nom          = (p.get("nom")   or "").strip()
@@ -893,6 +1028,8 @@ def etudiants_update(et_id: int):
 
 
 @app.route("/api/etudiants/<int:et_id>", methods=["DELETE"])
+@require_auth
+@require_role("admin")
 def etudiants_delete(et_id: int):
     conn = _db()
     if not conn.execute("SELECT id FROM etudiants WHERE id=?", (et_id,)).fetchone():
@@ -915,6 +1052,8 @@ def etudiants_delete(et_id: int):
 # ── Routes — Anciens endpoints conservés ─────────────────────────────────────
 
 @app.route("/api/modules")
+@require_auth
+@require_role("professeur")
 def modules():
     if not DB_PATH.exists():
         return jsonify({"erreur": "Base SQLite introuvable"}), 404
@@ -936,6 +1075,8 @@ def modules():
 
 
 @app.route("/api/filieres")
+@require_auth
+@require_role("professeur")
 def filieres():
     df_abs, profils = _get_data()
     if df_abs is None:
@@ -944,6 +1085,8 @@ def filieres():
 
 
 @app.route("/api/filieres-par-module/<nom_module>")
+@require_auth
+@require_role("professeur")
 def filieres_par_module(nom_module: str):
     if not DB_PATH.exists():
         return jsonify([]), 404
@@ -958,6 +1101,8 @@ def filieres_par_module(nom_module: str):
 
 
 @app.route("/api/modules/all")
+@require_auth
+@require_role("admin")
 def modules_all():
     conn = _db()
     rows = conn.execute(
@@ -969,6 +1114,8 @@ def modules_all():
 
 
 @app.route("/api/filieres/all")
+@require_auth
+@require_role("admin")
 def filieres_all():
     conn = _db()
     rows = conn.execute("SELECT id, nom, code, niveau FROM filieres ORDER BY code, niveau").fetchall()
@@ -977,6 +1124,8 @@ def filieres_all():
 
 
 @app.route("/api/module-classes")
+@require_auth
+@require_role("professeur")
 def module_classes():
     module_name = request.args.get("module", "")
     if not DB_PATH.exists():
@@ -998,6 +1147,7 @@ def module_classes():
 # ── Routes — Auth ─────────────────────────────────────────────────────────────
 
 @app.route("/api/auth/check-email", methods=["POST"])
+@public
 def auth_check_email():
     payload = request.get_json(silent=True) or {}
     email = (payload.get("email") or "").strip().lower()
@@ -1007,6 +1157,7 @@ def auth_check_email():
 
 
 @app.route("/api/auth/register", methods=["POST"])
+@public
 def auth_register():
     payload  = request.get_json(silent=True) or {}
     email    = (payload.get("email")    or "").strip().lower()
@@ -1022,6 +1173,7 @@ def auth_register():
 
 
 @app.route("/api/auth/login", methods=["POST"])
+@public
 def auth_login():
     payload  = request.get_json(silent=True) or {}
     email    = (payload.get("email")    or "").strip().lower()
@@ -1031,18 +1183,21 @@ def auth_login():
     result = _login_db(email, password)
     if not result["success"]:
         return jsonify(result), 401
+    et = result["etudiant"]
+    result["token"] = create_token("etudiant", email=et["email"], id_etudiant=et["id_etudiant"])
     return jsonify(result)
 
 
 @app.route("/api/auth/admin-login", methods=["POST"])
+@public
 def auth_admin_login():
     payload  = request.get_json(silent=True) or {}
     password = payload.get("password", "")
     admin_pw = os.environ.get("ADMIN_PASSWORD", "")
     if not admin_pw:
         return jsonify({"success": False, "error": "ADMIN_PASSWORD non configuré dans .env"}), 500
-    if password == admin_pw:
-        return jsonify({"success": True})
+    if secrets.compare_digest(password, admin_pw):
+        return jsonify({"success": True, "token": create_token("admin")})
     return jsonify({"success": False, "error": "Mot de passe incorrect"}), 401
 
 
@@ -1116,6 +1271,7 @@ def _update_user_password(id_etudiant: int, password_hash: str):
 
 
 @app.route("/api/auth/forgot-password", methods=["POST"])
+@public
 def forgot_password():
     payload = request.get_json(silent=True) or {}
     email   = (payload.get("email") or "").strip().lower()
@@ -1167,6 +1323,7 @@ def forgot_password():
 
 
 @app.route("/api/auth/reset-password", methods=["POST"])
+@public
 def reset_password_route():
     payload      = request.get_json(silent=True) or {}
     token        = (payload.get("token")        or "").strip()
@@ -1218,23 +1375,71 @@ def _traiter_fichier_notes(traitement):
 
 
 @app.route("/api/import-notes/preview", methods=["POST"])
+@require_auth
+@require_role("admin")
 def import_notes_preview():
     apercu, err = _traiter_fichier_notes(lambda path, _nom: preview_notes(path))
     return err or jsonify(apercu)
 
 
 @app.route("/api/import-notes", methods=["POST"])
+@require_auth
+@require_role("admin")
 def import_notes_route():
     stats, err = _traiter_fichier_notes(lambda path, nom: import_notes(path, source_name=nom))
     if err:
         return err
-    _cache["data"] = None  # le score risque dépend désormais des notes
+    _cache["data"] = None  # la moyenne affichée dans les profils vient des notes
     return jsonify(stats)
+
+
+# ── Routes — Import planning hebdomadaire / moyennes brute-nette ──────────────
+
+def _traiter_fichier_xlsx(traitement):
+    """Comme _traiter_fichier_notes, mais .xlsx uniquement et erreurs de format renvoyées telles quelles."""
+    if "file" not in request.files:
+        return None, (jsonify({"error": "Aucun fichier fourni"}), 400)
+    uploaded = request.files["file"]
+    if Path(uploaded.filename or "").suffix.lower() != ".xlsx":
+        return None, (jsonify({"error": "Format non supporté — utilisez un fichier .xlsx"}), 400)
+    return _traiter_fichier_notes(traitement)
+
+
+@app.route("/api/planning")
+@require_auth
+@require_role("admin")
+def planning_resume():
+    return jsonify(resume_planning())
+
+
+@app.route("/api/import-planning", methods=["POST"])
+@require_auth
+@require_role("admin")
+def import_planning_route():
+    date_debut = None
+    if request.form.get("date_debut"):
+        try:
+            date_debut = datetime.strptime(request.form["date_debut"], "%Y-%m-%d").date()
+        except ValueError:
+            return jsonify({"error": "Date de début invalide (format AAAA-MM-JJ)"}), 400
+    stats, err = _traiter_fichier_xlsx(lambda path, _nom: import_planning(path, date_debut))
+    return err or jsonify(stats)
+
+
+@app.route("/api/import-performance", methods=["POST"])
+@require_auth
+@require_role("admin")
+def import_performance_route():
+    annee = (request.form.get("annee_scolaire") or "").strip() or annee_scolaire_courante()
+    stats, err = _traiter_fichier_xlsx(lambda path, _nom: import_performance(path, annee))
+    return err or jsonify(stats)
 
 
 # ── Routes — Sync ─────────────────────────────────────────────────────────────
 
 @app.route("/api/sync", methods=["POST"])
+@require_auth
+@require_role("admin")
 def sync():
     if not DB_PATH.exists():
         return jsonify({"erreur": "Base SQLite introuvable"}), 404
@@ -1254,12 +1459,17 @@ def sync():
 
 
 @app.route("/api/alerts/history")
+@require_auth
+@require_role("admin")
 def alerts_history():
     student_id = request.args.get("student_id")
     return jsonify({"alerts": get_alert_history(student_id)})
 
 
 # ── Routes — Gestion Professeurs ──────────────────────────────────────────────
+
+FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:5173").rstrip("/")
+
 
 def _gen_mot_de_passe(longueur: int = 10) -> str:
     chars = string.ascii_letters + string.digits
@@ -1282,6 +1492,13 @@ def _html_credentials(prenom: str, nom: str, email: str, mot_de_passe: str, rese
   </p>
   <p>Connectez-vous sur la plateforme en choisissant le rôle <strong>Professeur</strong>
   et en saisissant ces identifiants.</p>
+  <p style="margin:24px 0">
+    <a href="{FRONTEND_URL}/"
+       style="background:#8DC63F;color:#fff;padding:12px 24px;text-decoration:none;
+              border-radius:6px;display:inline-block;font-weight:700">
+      {"Se connecter" if reset else "Première connexion"}
+    </a>
+  </p>
   <p style="color:#64748b;font-size:12px">Nous vous recommandons de conserver ce mot de passe en lieu sûr.</p>
   <hr style="border:none;border-top:1px solid #E2E8F0;margin:24px 0">
   <p style="color:#94a3b8;font-size:11px">Service de la Scolarité — ESITH Casablanca — StudentTrack</p>
@@ -1301,6 +1518,8 @@ def _prof_modules(conn, prof_id: int) -> list:
 
 
 @app.route("/api/professeurs")
+@require_auth
+@require_role("admin")
 def get_professeurs():
     conn = _db()
     profs = conn.execute(
@@ -1316,6 +1535,8 @@ def get_professeurs():
 
 
 @app.route("/api/professeurs/ajouter", methods=["POST"])
+@require_auth
+@require_role("admin")
 def professeurs_ajouter():
     p          = request.get_json(silent=True) or {}
     nom        = (p.get("nom")    or "").strip()
@@ -1373,7 +1594,107 @@ def professeurs_ajouter():
     })
 
 
+def _cle_colonne(h) -> str:
+    h = unicodedata.normalize("NFD", str(h)).encode("ascii", "ignore").decode()
+    return h.strip().lower()
+
+
+def _modules_pour(conn, module: str, filiere: str) -> list[int]:
+    """Ids des modules portant ce nom dans cette filière (toutes promotions).
+    La filière accepte le code exact ('GI-EO') ou son suffixe ('EO')."""
+    filiere = filiere.upper()
+    return [r[0] for r in conn.execute(
+        """SELECT m.id FROM modules m JOIN filieres f ON m.id_filiere = f.id
+           WHERE LOWER(TRIM(m.nom)) = LOWER(?) AND (UPPER(f.code) = ? OR UPPER(f.code) LIKE ?)""",
+        (module.strip(), filiere, f"%-{filiere}"),
+    ).fetchall()]
+
+
+@app.route("/api/professeurs/import-csv", methods=["POST"])
+@require_auth
+@require_role("admin")
+def professeurs_import_csv():
+    """CSV nom, prenom, email, module, filiere — une ligne par module enseigné.
+    Les emails déjà en base sont ignorés ; chaque nouveau professeur reçoit ses identifiants."""
+    uploaded = request.files.get("file")
+    if not uploaded or not uploaded.filename:
+        return jsonify({"success": False, "error": "Aucun fichier fourni"}), 400
+    try:
+        df = pd.read_csv(io.BytesIO(uploaded.read()), sep=None, engine="python",
+                         dtype=str, encoding="utf-8-sig").fillna("")
+    except Exception as exc:
+        return jsonify({"success": False, "error": f"CSV illisible : {exc}"}), 400
+
+    df.columns = [_cle_colonne(c) for c in df.columns]
+    manquantes = {"nom", "prenom", "email", "module", "filiere"} - set(df.columns)
+    if manquantes:
+        return jsonify({"success": False,
+                        "error": f"Colonnes manquantes : {', '.join(sorted(manquantes))}"}), 400
+
+    # Regroupe les lignes par email : un professeur peut enseigner plusieurs modules
+    profs: dict[str, dict] = {}
+    for _, row in df.iterrows():
+        email = row["email"].strip().lower()
+        if not email:
+            continue
+        p = profs.setdefault(email, {"nom": row["nom"].strip(), "prenom": row["prenom"].strip(), "modules": []})
+        if row["module"].strip():
+            p["modules"].append((row["module"].strip(), row["filiere"].strip()))
+
+    conn = _db()
+    existants = {r[0].lower() for r in conn.execute("SELECT email FROM professeurs").fetchall()}
+    ajoutes, ignores, erreurs, modules_introuvables, a_notifier = [], [], [], [], []
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    for email, p in profs.items():
+        if email in existants:
+            ignores.append(email)
+            continue
+        if not p["nom"] or not p["prenom"]:
+            erreurs.append(f"{email} : nom ou prénom manquant")
+            continue
+        mdp = _gen_mot_de_passe()
+        cur = conn.execute(
+            "INSERT INTO professeurs (nom, prenom, email, password_hash, created_at) VALUES (?, ?, ?, ?, ?)",
+            (p["nom"], p["prenom"], email, _hash_password(mdp), now),
+        )
+        for module, filiere in p["modules"]:
+            ids = _modules_pour(conn, module, filiere)
+            if not ids:
+                modules_introuvables.append(f"{module} ({filiere or '—'}) — {email}")
+            for mid in ids:
+                conn.execute(
+                    "INSERT OR IGNORE INTO professeur_modules (id_professeur, id_module) VALUES (?, ?)",
+                    (cur.lastrowid, mid),
+                )
+        ajoutes.append(email)
+        a_notifier.append((p["prenom"], p["nom"], email, mdp))
+    conn.commit()
+    conn.close()
+
+    emails_echoues = []
+    for prenom, nom, email, mdp in a_notifier:
+        try:
+            envoye = _send_email(email, "Vos identifiants StudentTrack — ESITH Casablanca",
+                                 _html_credentials(prenom, nom, email, mdp))
+        except Exception:
+            envoye = False
+        if not envoye:
+            emails_echoues.append(email)
+
+    return jsonify({
+        "success":              True,
+        "ajoutes":              len(ajoutes),
+        "ignores":              len(ignores),
+        "erreurs":              erreurs,
+        "modules_introuvables": modules_introuvables,
+        "emails_echoues":       emails_echoues,
+    })
+
+
 @app.route("/api/professeurs/<int:prof_id>", methods=["PUT"])
+@require_auth
+@require_role("admin")
 def professeurs_update(prof_id: int):
     p          = request.get_json(silent=True) or {}
     nom        = (p.get("nom")    or "").strip()
@@ -1405,6 +1726,8 @@ def professeurs_update(prof_id: int):
 
 
 @app.route("/api/professeurs/<int:prof_id>/reset-password", methods=["POST"])
+@require_auth
+@require_role("admin")
 def professeurs_reset_password(prof_id: int):
     conn = _db()
     prof = conn.execute(
@@ -1436,6 +1759,8 @@ def professeurs_reset_password(prof_id: int):
 
 
 @app.route("/api/professeurs/<int:prof_id>", methods=["DELETE"])
+@require_auth
+@require_role("admin")
 def professeurs_delete(prof_id: int):
     conn = _db()
     if not conn.execute("SELECT id FROM professeurs WHERE id=?", (prof_id,)).fetchone():
@@ -1450,6 +1775,7 @@ def professeurs_delete(prof_id: int):
 
 
 @app.route("/api/auth/professeur-login", methods=["POST"])
+@public
 def auth_professeur_login():
     payload  = request.get_json(silent=True) or {}
     email    = (payload.get("email")    or "").strip().lower()
@@ -1476,6 +1802,7 @@ def auth_professeur_login():
 
     return jsonify({
         "success":    True,
+        "token":      create_token("professeur", email=prof["email"], id_professeur=prof["id"]),
         "professeur": {
             "id":      prof["id"],
             "nom":     prof["nom"],
@@ -1484,6 +1811,9 @@ def auth_professeur_login():
             "modules": mods,
         },
     })
+
+
+verifier_protection(app)  # aucun endpoint /api/ sans @require_auth ni @public
 
 
 if __name__ == "__main__":

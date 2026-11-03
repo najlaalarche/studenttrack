@@ -1,4 +1,5 @@
 import { useEffect, useState, useCallback } from "react";
+import { apiFetch } from "../../api.js";
 
 const BASE = "http://localhost:5050";
 const LIMIT = 20;
@@ -22,7 +23,7 @@ function StatutBadge({ statut }) {
   }[statut] || { bg: "#f1f5f9", border: "#e2e8f0", color: "#64748b" };
   return (
     <span style={{ fontSize: 10, fontWeight: 700, padding: "2px 8px", borderRadius: 99, backgroundColor: cfg.bg, border: `1px solid ${cfg.border}`, color: cfg.color, textTransform: "uppercase" }}>
-      {statut}
+      {statut === "AUTORISE" ? "Rien à signaler" : statut}
     </span>
   );
 }
@@ -51,7 +52,7 @@ export default function PageGestionEtudiants() {
 
   // Charge les 27 filières comme options de session
   useEffect(() => {
-    fetch(`${BASE}/api/session-programmes`)
+    apiFetch(`${BASE}/api/session-programmes`)
       .then(r => r.json())
       .then(data => setFilieres(Array.isArray(data) ? data : []))
       .catch(() => {});
@@ -59,7 +60,7 @@ export default function PageGestionEtudiants() {
 
   const loadList = useCallback(() => {
     setLoadingList(true);
-    fetch(`${BASE}/api/etudiants/paginated?page=${page}&limit=${LIMIT}&search=${encodeURIComponent(search)}`)
+    apiFetch(`${BASE}/api/etudiants/paginated?page=${page}&limit=${LIMIT}&search=${encodeURIComponent(search)}`)
       .then(r => r.json())
       .then(data => { setListe(data.etudiants || []); setTotal(data.total || 0); })
       .catch(() => {})
@@ -89,7 +90,7 @@ export default function PageGestionEtudiants() {
       ? `${selectedFiliere.code} ${selectedFiliere.niveau}`
       : "";
     try {
-      const res = await fetch(`${BASE}/api/etudiants/ajouter`, {
+      const res = await apiFetch(`${BASE}/api/etudiants/ajouter`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -128,7 +129,7 @@ export default function PageGestionEtudiants() {
   async function handleForceUpdate(existant) {
     setSaving(true);
     try {
-      const res = await fetch(`${BASE}/api/etudiants/${existant.id}`, {
+      const res = await apiFetch(`${BASE}/api/etudiants/${existant.id}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -155,7 +156,7 @@ export default function PageGestionEtudiants() {
   async function handleDelete(et) {
     if (!window.confirm(`Supprimer ${et.prenom} ${et.nom} et toutes ses absences/alertes ?`)) return;
     try {
-      const res = await fetch(`${BASE}/api/etudiants/${et.id}`, { method: "DELETE" }).then(r => r.json());
+      const res = await apiFetch(`${BASE}/api/etudiants/${et.id}`, { method: "DELETE" }).then(r => r.json());
       if (res.success) {
         setMsg({ type: "success", text: `✓ ${et.prenom} ${et.nom} supprimé.` });
         loadList();

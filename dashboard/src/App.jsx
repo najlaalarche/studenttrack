@@ -4,6 +4,7 @@ import ResetPassword from "./pages/ResetPassword.jsx";
 import DashboardEtudiant from "./pages/etudiant/DashboardEtudiant.jsx";
 import DashboardProfesseur from "./pages/professeur/DashboardProfesseur.jsx";
 import DashboardAdmin from "./pages/admin/DashboardAdmin.jsx";
+import { getToken, clearToken } from "./api.js";
 
 const SESSION_KEY = "studenttrack_session";
 
@@ -11,6 +12,10 @@ function readStoredSession() {
   try {
     const raw = localStorage.getItem(SESSION_KEY);
     if (!raw) return null;
+    if (!getToken()) {  // session antérieure au JWT (ou token effacé) : reconnexion obligatoire
+      localStorage.removeItem(SESSION_KEY);
+      return null;
+    }
     const parsed = JSON.parse(raw);
     if (parsed?.role) return parsed;
   } catch {
@@ -49,6 +54,7 @@ export default function App() {
   function handleLogout() {
     setSession(null);
     localStorage.removeItem(SESSION_KEY);
+    clearToken();
   }
 
   function handleAdminPageChange(page) {
@@ -70,7 +76,7 @@ export default function App() {
   if (!session) return <Login onLogin={handleLogin} />;
 
   if (session.role === "etudiant") {
-    return <DashboardEtudiant email={session.data.email} onLogout={handleLogout} />;
+    return <DashboardEtudiant idEtudiant={session.data.id_etudiant} onLogout={handleLogout} />;
   }
 
   if (session.role === "professeur") {

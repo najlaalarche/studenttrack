@@ -1,7 +1,7 @@
 """
 update_dataset_v2.py — Mise à jour du dataset Modules_Volumes_Horaires_ESITH.xlsx
 Applique les Bloc_Competence officiels 2025-2026 et ajoute la filière ITTI.
-Sortie : data/Modules_Volumes_Horaires_ESITH_V2.xlsx
+Sortie : data/samples/Modules_Volumes_Horaires_ESITH_V2.xlsx
 """
 
 import unicodedata, re
@@ -11,8 +11,8 @@ from pathlib import Path
 import pandas as pd
 
 ROOT    = Path(__file__).resolve().parents[2]
-INPUT   = ROOT / "data" / "Modules_Volumes_Horaires_ESITH.xlsx"
-OUTPUT  = ROOT / "data" / "Modules_Volumes_Horaires_ESITH_V2.xlsx"
+INPUT   = ROOT / "data" / "samples" / "Modules_Volumes_Horaires_ESITH.xlsx"
+OUTPUT  = ROOT / "data" / "samples" / "Modules_Volumes_Horaires_ESITH_V2.xlsx"
 
 
 # ---------------------------------------------------------------------------

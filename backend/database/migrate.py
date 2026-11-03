@@ -7,8 +7,8 @@ import pandas as pd
 ROOT = Path(__file__).resolve().parents[2]
 DB_PATH = ROOT / "data" / "studenttrack.db"
 SCHEMA_PATH = Path(__file__).resolve().parent / "schema.sql"
-MODULES_FILE = ROOT / "data" / "Modules_Volumes_Horaires_ESITH.xlsx"
-ABSENCES_FILE = ROOT / "data" / "Absences_ESITH_14etudiants.xlsx"
+MODULES_FILE = ROOT / "data" / "samples" / "Modules_Volumes_Horaires_ESITH.xlsx"
+ABSENCES_FILE = ROOT / "data" / "samples" / "Absences_ESITH_14etudiants.xlsx"
 
 FILIERE_MAPPING = {
     "INGTC": "IMS",

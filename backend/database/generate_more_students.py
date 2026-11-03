@@ -258,18 +258,10 @@ def print_summary(conn: sqlite3.Connection) -> None:
     averti   = sum(1 for p in profils if p.action_recommandee == "WARN_STUDENT")
     exclu    = sum(1 for p in profils if p.action_recommandee == "NOTIFY_EXCLUSION")
 
-    faible   = sum(1 for p in profils if p.niveau_risque == "faible")
-    modere   = sum(1 for p in profils if p.niveau_risque == "modéré")
-    critique = sum(1 for p in profils if p.niveau_risque == "critique")
-
     print(f"\nRépartition statut (étudiants avec absences) :")
     print(f"  AUTORISE : {autorise}")
     print(f"  AVERTI   : {averti}")
     print(f"  EXCLU    : {exclu}")
-    print(f"\nRépartition niveau de risque :")
-    print(f"  faible   : {faible}")
-    print(f"  modéré   : {modere}")
-    print(f"  critique : {critique}")
     print(f"{'='*55}")
 
 

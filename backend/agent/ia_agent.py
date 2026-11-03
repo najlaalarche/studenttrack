@@ -9,7 +9,7 @@ from dotenv import load_dotenv
 
 ROOT = Path(__file__).resolve().parents[2]
 DB_PATH = ROOT / "data" / "studenttrack.db"
-EMAILS_LOG_FILE = ROOT / "data" / "emails_log.json"  # kept as fallback
+EMAILS_LOG_FILE = ROOT / "data" / "logs" / "emails_log.json"  # kept as fallback
 load_dotenv(ROOT / ".env")
 
 BREVO_API_KEY     = os.environ.get("BREVO_API_KEY", "")
@@ -185,7 +185,7 @@ def _decision_via_api(profil, client) -> DecisionIA:
 Voici le profil d'un étudiant :
 - Nom : {profil.prenom} {profil.nom}
 - Email : {profil.email}
-- Score risque : {profil.score_risque}/100 ({profil.niveau_risque})
+- Modules exclus / avertis : {profil.nb_modules_exclu} / {profil.nb_modules_averti}
 - Modules : {_json.dumps(modules_resume, ensure_ascii=False)}
 - Action recommandée : {profil.action_recommandee}
 

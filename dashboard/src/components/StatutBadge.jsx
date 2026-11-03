@@ -1,6 +1,6 @@
 export default function StatutBadge({ statut, size = "sm" }) {
   const map = {
-    AUTORISE: { bg: "rgba(141,198,63,0.12)",  border: "rgba(141,198,63,0.4)",  color: "#5a9e14", label: "AUTORISÉ" },
+    AUTORISE: { bg: "rgba(141,198,63,0.12)",  border: "rgba(141,198,63,0.4)",  color: "#5a9e14", label: "RIEN À SIGNALER" },
     AVERTI:   { bg: "rgba(245,158,11,0.12)",  border: "rgba(245,158,11,0.4)",  color: "#d97706", label: "AVERTI"   },
     EXCLU:    { bg: "rgba(239,68,68,0.12)",   border: "rgba(239,68,68,0.35)",  color: "#dc2626", label: "EXCLU"    },
   };

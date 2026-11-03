@@ -1,6 +1,7 @@
 import { useRef, useState } from "react";
+import { apiFetch } from "../../api.js";
 
-const BASE = "http://localhost:5050";
+export const BASE = "http://localhost:5050";
 
 function Spinner({ text }) {
   return (
@@ -28,13 +29,13 @@ function parseCSV(text) {
 }
 
 // État d'un import : POST du fichier, messages du spinner qui défilent, résultat ou erreur.
-function useImport(steps) {
+export function useImport(steps) {
   const [loading, setLoading]   = useState(false);
   const [loadText, setLoadText] = useState("");
   const [result, setResult]     = useState(null);
   const [error, setError]       = useState(null);
 
-  async function run(url, file) {
+  async function run(url, file, champs = {}) {
     setLoading(true);
     setError(null);
     setResult(null);
@@ -48,7 +49,8 @@ function useImport(steps) {
     try {
       const fd = new FormData();
       fd.append("file", file);
-      const res = await fetch(`${BASE}${url}`, { method: "POST", body: fd }).then(r => r.json());
+      Object.entries(champs).forEach(([k, v]) => fd.append(k, v));
+      const res = await apiFetch(`${BASE}${url}`, { method: "POST", body: fd }).then(r => r.json());
       if (res.error) throw new Error(res.error);
       setResult(res);
     } catch (e) {
@@ -70,7 +72,7 @@ export default function PageImportation() {
     <div>
       <ImportAbsences />
       <div style={{ marginTop: 40, paddingTop: 32, borderTop: "1px solid #E2E8F0" }}>
-        <ImportNotes />
+        <ImportPerformance />
       </div>
     </div>
   );
@@ -181,81 +183,72 @@ function ImportAbsences() {
   );
 }
 
-function ImportNotes() {
-  const [file, setFile]       = useState(null);
-  const [preview, setPreview] = useState(null);
-  const [apercu, setApercu]   = useState(null);
+function anneeScolaireCourante() {
+  const d = new Date();
+  const debut = d.getMonth() >= 8 ? d.getFullYear() : d.getFullYear() - 1;
+  return `${debut}-${debut + 1}`;
+}
+
+function ImportPerformance() {
+  const [file, setFile]   = useState(null);
+  const [annee, setAnnee] = useState(anneeScolaireCourante());
   const imp = useImport([
     "Lecture du fichier Excel…",
-    "Rapprochement des étudiants…",
-    "Enregistrement des notes…",
-    "Recalcul des scores de risque…",
+    "Rapprochement par matricule…",
+    "Calcul du taux de performance perdue…",
   ]);
   const { result } = imp;
-
-  // Fichier binaire (.xlsx/.xlsb) : l'aperçu est lu par le backend avec le même parseur que l'import
-  async function handleFile(f) {
-    setFile(f);
-    setPreview(null);
-    setApercu(null);
-    imp.reset();
-    try {
-      const fd = new FormData();
-      fd.append("file", f);
-      const res = await fetch(`${BASE}/api/import-notes/preview`, { method: "POST", body: fd }).then(r => r.json());
-      if (res.error) throw new Error(res.error);
-      setApercu(res);
-      setPreview({ rows: res.rows, headers: res.headers });
-    } catch {
-      setPreview(null);  // aperçu indisponible (API ancienne version, fichier illisible…) : l'import reste possible
-    }
-  }
-
-  const titreApercu = apercu && [
-    "Aperçu — 5 premières lignes",
-    apercu.semestre, apercu.filiere, apercu.annee_universitaire,
-    `${apercu.total} étudiant(s)`,
-  ].filter(Boolean).join(" · ");
 
   return (
     <div>
       <h2 style={{ fontSize: 18, fontWeight: 700, color: "#1a3a6b", marginBottom: 8 }}>
-        Importer les notes
+        Importer les moyennes brute / nette
       </h2>
-      <p style={{ fontSize: 13, color: "#64748b", marginBottom: 24 }}>
-        Export Konosys des moyennes (Excel) — seule la colonne{" "}
-        <span style={{ fontFamily: "monospace", fontSize: 12, color: "#475569" }}>Moyenne</span>{" "}
-        est importée. Liaison par nom + prénom dans la même filière ; les étudiants inconnus sont créés automatiquement.
+      <p style={{ fontSize: 13, color: "#64748b", marginBottom: 16 }}>
+        Colonnes attendues :{" "}
+        <span style={{ fontFamily: "monospace", fontSize: 12, color: "#475569" }}>
+          Matricule, Moyenne Brute, Moyenne Nette, Moyenne S1, Moyenne S2, Moyenne Année Scolaire
+        </span>
+        . Liaison par matricule ; un ré-import pour la même année met les moyennes à jour.
+        Taux de performance perdue = (brute − nette) / brute × 100.
       </p>
+
+      <label style={{ display: "flex", alignItems: "center", gap: 10, fontSize: 13, color: "#475569", marginBottom: 16 }}>
+        Année scolaire
+        <input
+          value={annee}
+          onChange={e => setAnnee(e.target.value)}
+          placeholder="2026-2027"
+          style={{ padding: "6px 10px", borderRadius: 6, border: "1px solid #CBD5E1", fontSize: 13, width: 120 }}
+        />
+      </label>
 
       <DropZone
         file={file}
-        onFile={handleFile}
-        accept=".xlsx,.xlsb"
-        label="📊 Glisser-déposer le fichier de notes Excel"
-        hint="ou cliquer pour sélectionner (.xlsx, .xlsb)"
+        onFile={f => { setFile(f); imp.reset(); }}
+        accept=".xlsx"
+        label="📊 Glisser-déposer le fichier des moyennes"
+        hint="ou cliquer pour sélectionner (.xlsx)"
       />
-      {preview?.rows.length > 0
-        ? <PreviewTable preview={preview} title={titreApercu} />
-        : file && <FichierSelectionne file={file} />}
-      <ImportControls file={file} imp={imp} onImport={() => imp.run("/api/import-notes", file)} />
+      {file && <FichierSelectionne file={file} />}
+      <ImportControls file={file} imp={imp} onImport={() => imp.run("/api/import-performance", file, { annee_scolaire: annee })} />
 
       {result && (
-        <ResultCard title={`✓ Import des notes terminé${result.semestre ? ` — ${result.semestre} ${result.annee_universitaire}` : ""}`}>
-          <ResultLine icon="📄" label="Étudiants traités" value={result.etudiants_traites} color="#1e293b" />
-          <ResultLine icon="➕" label="Notes importées" value={result.notes_ajoutees} color="#1a3a6b" />
-          <ResultLine icon="↻" label="Notes mises à jour" value={result.notes_mises_a_jour} color="#64748b" />
-          <ResultLine icon="🔗" label="Étudiants liés automatiquement" value={result.etudiants_lies_auto} color="#1a3a6b" />
+        <ResultCard title={`✓ Import des moyennes terminé — ${result.annee_scolaire}`}>
+          <ResultLine icon="📄" label="Lignes traitées" value={result.lignes_traitees} color="#1e293b" />
+          <ResultLine icon="➕" label="Moyennes ajoutées" value={result.ajoutees} color="#1a3a6b" />
+          <ResultLine icon="↻" label="Moyennes mises à jour" value={result.mises_a_jour} color="#64748b" />
 
-          {result.crees?.length > 0 && (
-            <InfoCard tone="green" title={`✓ ${result.crees.length} nouvel(s) étudiant(s) créé(s) automatiquement`}>
-              {result.crees.map(e => <div key={e.matricule}>→ {e.matricule} · {e.prenom} {e.nom}</div>)}
+          {result.non_trouves?.length > 0 && (
+            <InfoCard tone="amber" title={`⚠ ${result.non_trouves.length} matricule(s) sans étudiant correspondant`}>
+              <div>{result.non_trouves.join(", ")}</div>
+              <div style={{ marginTop: 4 }}>→ Moyennes enregistrées : elles s'afficheront dès que le matricule sera renseigné sur la fiche étudiant</div>
             </InfoCard>
           )}
 
-          {result.non_trouves?.length > 0 && (
-            <InfoCard tone="amber" title={`⚠ ${result.non_trouves.length} étudiant(s) à valider manuellement → voir data/rapprochement_a_valider.csv`}>
-              {result.non_trouves.map(e => <div key={e.matricule}>{e.matricule} · {e.prenom} {e.nom} — {e.raison}</div>)}
+          {result.incompletes?.length > 0 && (
+            <InfoCard tone="blue" title={`ℹ ${result.incompletes.length} ligne(s) sans moyenne brute ou nette — taux non calculable`}>
+              <div>{result.incompletes.join(", ")}</div>
             </InfoCard>
           )}
         </ResultCard>
@@ -264,9 +257,9 @@ function ImportNotes() {
   );
 }
 
-// ── Composants partagés par les deux imports ─────────────────────────────────
+// ── Composants partagés par les imports ──────────────────────────────────────
 
-function DropZone({ file, onFile, accept, label, hint }) {
+export function DropZone({ file, onFile, accept, label, hint }) {
   const fileRef = useRef(null);
   const [dragging, setDragging] = useState(false);
 
@@ -320,7 +313,7 @@ function DropZone({ file, onFile, accept, label, hint }) {
   );
 }
 
-function FichierSelectionne({ file }) {
+export function FichierSelectionne({ file }) {
   return (
     <div style={{ marginTop: 20, backgroundColor: "#f0fdf4", border: "1px solid #86efac", borderRadius: 8, padding: "12px 16px", fontSize: 13, color: "#166534" }}>
       ✓ Fichier sélectionné : <strong>{file.name}</strong> — aperçu disponible après import
@@ -362,7 +355,7 @@ function PreviewTable({ preview, title }) {
 }
 
 // Bouton d'import + spinner + message d'erreur
-function ImportControls({ file, imp, onImport }) {
+export function ImportControls({ file, imp, onImport }) {
   return (
     <>
       {file && !imp.loading && (
@@ -394,7 +387,7 @@ function ImportControls({ file, imp, onImport }) {
   );
 }
 
-function ResultCard({ title, children }) {
+export function ResultCard({ title, children }) {
   return (
     <div style={{ marginTop: 24, backgroundColor: "#fff", border: "1px solid #E2E8F0", borderRadius: 8, padding: 24, boxShadow: "0 1px 3px rgba(0,0,0,0.08)" }}>
       <div style={{ fontSize: 15, fontWeight: 700, color: "#5a9e14", marginBottom: 20 }}>{title}</div>
@@ -411,7 +404,7 @@ const TONES = {
   red:    { bg: "#fef2f2", border: "#fecaca", title: "#dc2626", text: "#dc2626" },
 };
 
-function InfoCard({ tone, title, children }) {
+export function InfoCard({ tone, title, children }) {
   const t = TONES[tone];
   return (
     <div style={{ backgroundColor: t.bg, border: `1px solid ${t.border}`, borderRadius: 6, padding: "12px 14px" }}>
@@ -421,7 +414,7 @@ function InfoCard({ tone, title, children }) {
   );
 }
 
-function ResultLine({ icon, label, value, color }) {
+export function ResultLine({ icon, label, value, color }) {
   return (
     <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
       <span style={{ fontSize: 18, width: 24, textAlign: "center" }}>{icon}</span>

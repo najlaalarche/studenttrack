@@ -13,7 +13,8 @@ StudentTrack analyse les données d'absences issues de Konosys et détecte autom
 - Lecture automatique du dataset Konosys (Excel multi-feuilles)
 - Détection de delta — traite uniquement les nouvelles absences
 - Calcul du taux d'absence par module (NJ et total)
-- Score de risque global (absences + notes)
+- Taux d'absence / présence cumulé semaine par semaine (planning hebdomadaire importé)
+- Taux de performance perdue : (moyenne brute − moyenne nette) / moyenne brute × 100
 - Agent IA pour rédiger les emails d'alerte
 - Dashboard avec 3 rôles : Étudiant, Professeur, Administration
 
@@ -30,7 +31,10 @@ studenttrack/
 ├── config/
 │   └── modules.json          # seuils configurables
 ├── data/
-│   └── dataset.xlsx          # dataset Konosys (non versionné)
+│   ├── studenttrack.db       # base SQLite (non versionnée)
+│   ├── backups/              # sauvegardes de la base (non versionnées)
+│   ├── samples/              # fichiers sources Excel (non versionnés) + CSV de test
+│   └── logs/                 # .last_state.json, emails_log.json, rapprochement_a_valider.csv
 ├── backend/
 │   ├── ingestion/reader.py   # lecture + normalisation + delta
 │   ├── analysis/engine.py    # calcul taux et statuts par module

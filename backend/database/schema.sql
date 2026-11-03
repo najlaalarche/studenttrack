@@ -106,6 +106,40 @@ CREATE TABLE IF NOT EXISTS notes (
     UNIQUE(id_etudiant, semestre, annee_universitaire)
 );
 
+CREATE TABLE IF NOT EXISTS planning_seances (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    id_seance TEXT UNIQUE,
+    date_seance DATE,
+    numero_semaine INTEGER,  -- semaine depuis le début d'année scolaire (parametres.date_debut_annee_scolaire)
+    duree_heures FLOAT,
+    groupe TEXT,
+    module TEXT,
+    code_module TEXT,
+    type_seance TEXT,
+    cursus TEXT,
+    appel_fait TEXT
+);
+
+CREATE TABLE IF NOT EXISTS parametres (
+    cle TEXT PRIMARY KEY,
+    valeur TEXT
+);
+
+CREATE TABLE IF NOT EXISTS notes_performance (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    id_etudiant INTEGER REFERENCES etudiants(id),
+    matricule TEXT,
+    moyenne_brute FLOAT,
+    moyenne_nette FLOAT,
+    moyenne_s1 FLOAT,
+    moyenne_s2 FLOAT,
+    moyenne_annee FLOAT,
+    annee_scolaire TEXT,
+    date_import DATETIME DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(matricule, annee_scolaire)
+);
+
+CREATE INDEX IF NOT EXISTS idx_planning_groupe ON planning_seances(groupe);
 CREATE INDEX IF NOT EXISTS idx_absences_etudiant ON absences(id_etudiant);
 CREATE INDEX IF NOT EXISTS idx_absences_module ON absences(id_module);
 CREATE INDEX IF NOT EXISTS idx_alertes_etudiant ON alertes(id_etudiant);

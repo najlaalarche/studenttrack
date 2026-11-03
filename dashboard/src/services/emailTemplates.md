@@ -8,7 +8,6 @@
 - `{{module_name}}` — Nom du module
 - `{{taux_absence}}` — Taux actuel (ex: "25%")
 - `{{seuil}}` — Seuil franchi (ex: "20%")
-- `{{score_global}}` — Score global /100
 - `{{date_alerte}}` — Date d'alerte en format FR (ex: "02/06/2026")
 
 ---
@@ -66,9 +65,6 @@
                 </p>
                 <p style="margin: 0 0 4px 0; font-size: 13px;">
                   • Seuil critère : <strong>{{seuil}}</strong>
-                </p>
-                <p style="margin: 0; font-size: 13px;">
-                  • Score global : <strong>{{score_global}}/100</strong>
                 </p>
               </div>
 
@@ -170,7 +166,6 @@
               </p>
 
               <p style="margin: 0 0 16px 0; font-size: 13px; line-height: 1.6; color: #666;">
-                • Score global : {{score_global}}/100<br>
                 • Filière : {{filiere}}<br>
                 • Date d'alerte : {{date_alerte}}
               </p>
@@ -270,7 +265,6 @@
                 • Étudiant : {{student_name}} (ID: {{student_id}})<br>
                 • Filière : {{filiere}}<br>
                 • Module : {{module_name}}<br>
-                • Score global : {{score_global}}/100<br>
                 • Date d'alerte : {{date_alerte}}
               </p>
 
@@ -366,10 +360,6 @@
                   <tr>
                     <td style="padding: 4px 0; color: #666;"><strong>Seuil :</strong></td>
                     <td style="padding: 4px 0; text-align: right;"><strong>{{seuil}}</strong></td>
-                  </tr>
-                  <tr>
-                    <td style="padding: 4px 0; color: #666;"><strong>Score global :</strong></td>
-                    <td style="padding: 4px 0; text-align: right;"><strong>{{score_global}}/100</strong></td>
                   </tr>
                 </table>
               </div>
@@ -484,7 +474,6 @@
 
               <p style="margin: 0; font-size: 12px; color: #666;">
                 <strong>Filière :</strong> {{filiere}}<br>
-                <strong>Score global :</strong> {{score_global}}/100<br>
                 <strong>Date :</strong> {{date_alerte}}
               </p>
             </td>
@@ -570,10 +559,6 @@
                   <tr>
                     <td style="padding: 6px 0; color: #666;"><strong>Taux absences total :</strong></td>
                     <td style="padding: 6px 0; text-align: right;"><strong style="color: #991B1B;">{{taux_absence}}</strong></td>
-                  </tr>
-                  <tr>
-                    <td style="padding: 6px 0; color: #666;"><strong>Score global :</strong></td>
-                    <td style="padding: 6px 0; text-align: right;">{{score_global}}/100</td>
                   </tr>
                   <tr>
                     <td style="padding: 6px 0; color: #666;"><strong>Date d'exclusion :</strong></td>
