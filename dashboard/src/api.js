@@ -37,6 +37,7 @@ const _get = (path) => apiFetch(`${BASE}${path}`).then(r => r.json());
 
 export const getStats     = () => _get(`/api/stats`);
 export const getStatsTauxAbsence = () => _get(`/api/stats/taux-absence`);
+export const getStatsParFiliere   = () => _get(`/api/stats/par-filiere`);
 export const getEtudiants = () => _get(`/api/etudiants`);
 export const getEtudiant  = (id) => _get(`/api/etudiant/${id}`);
 export const getTauxAbsence = (id) => _get(`/api/etudiant/${id}/taux-absence`);
@@ -51,6 +52,13 @@ export const getModuleClasses = (module) => _get(`/api/module-classes?module=${e
 export const getAbsencesParSemaine = (module, filiere, semestre) =>
   _get(`/api/absences/par-semaine?module=${encodeURIComponent(module)}&filiere=${encodeURIComponent(filiere)}&semestre=${semestre}`);
 
+// { ajoutes, comptes_crees, ignores, erreurs[], emails_envoyes, emails_echoues[] } — emails envoyés par Brevo
+export const importEtudiantsCsv = (file) => {
+  const body = new FormData();
+  body.append("file", file);
+  return apiFetch(`${BASE}/api/etudiants/import-csv`, { method: "POST", body }).then(r => r.json());
+};
+
 export const importProfesseursCsv = (file) => {
   const body = new FormData();
   body.append("file", file);
@@ -64,8 +72,9 @@ const _post = (url, body) =>
     body: JSON.stringify(body),
   }).then(r => r.json());
 
+// { analyse } — en cas d'indisponibilité, analyse contient le message d'erreur
+export const postAnalyseIA      = (role, data) => _post("/api/ia/analyse", { role, data });
 export const authCheckEmail    = (email) => _post("/api/auth/check-email", { email });
-export const authRegister      = (email, password) => _post("/api/auth/register", { email, password });
 // Les 3 connexions renvoient un JWT : il est mémorisé ici
 const _login = (url, body) => _post(url, body).then(res => { if (res?.success) setToken(res.token); return res; });
 
@@ -73,6 +82,9 @@ export const authLogin         = (email, password) => _login("/api/auth/login", 
 export const authAdminLogin    = (password) => _login("/api/auth/admin-login", { password });
 export const authForgotPassword = (email) => _post("/api/auth/forgot-password", { email });
 export const authResetPassword  = (token, new_password) => _post("/api/auth/reset-password", { token, new_password });
+// Changement du mot de passe temporaire : renvoie un nouveau token sans restriction
+export const authChangePassword = (current_password, new_password) =>
+  _login("/api/auth/change-password", { current_password, new_password });
 
 export const authProfesseurLogin = (email, password) =>
   _login("/api/auth/professeur-login", { email, password });

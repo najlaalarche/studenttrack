@@ -28,8 +28,12 @@ if not _SECRET:
     print("[auth] ATTENTION : JWT_SECRET_KEY absent du .env — clé temporaire générée")
 
 
+# Seul endpoint accessible tant que le mot de passe temporaire n'a pas été changé
+ENDPOINTS_MDP_TEMPORAIRE = {"auth_change_password"}
+
+
 def create_token(role: str, email: str = "", id_etudiant: int | None = None,
-                 id_professeur: int | None = None) -> str:
+                 id_professeur: int | None = None, must_change_password: bool = False) -> str:
     if role not in ROLES:
         raise ValueError(f"rôle inconnu : {role}")
     now = datetime.now(timezone.utc)
@@ -38,6 +42,8 @@ def create_token(role: str, email: str = "", id_etudiant: int | None = None,
         payload["id_etudiant"] = int(id_etudiant)
     if id_professeur is not None:
         payload["id_professeur"] = int(id_professeur)
+    if must_change_password:
+        payload["mcp"] = True
     return jwt.encode(payload, _SECRET, algorithm=ALGO)
 
 
@@ -61,6 +67,10 @@ def require_auth(f):
             return _erreur("Token invalide", 401)
         if g.user.get("role") not in ROLES:
             return _erreur("Token invalide", 401)
+        if g.user.get("mcp") and request.endpoint not in ENDPOINTS_MDP_TEMPORAIRE:
+            return jsonify({"erreur": "Changement de mot de passe obligatoire",
+                            "error": "Changement de mot de passe obligatoire",
+                            "must_change_password": True}), 403
         return f(*args, **kwargs)
     wrapper._auth = "protege"
     return wrapper
