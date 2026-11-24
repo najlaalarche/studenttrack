@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
-import { getStats, getStatsTauxAbsence, postSync } from "../../api.js";
+import { getStats, getStatsParFiliere, getStatsTauxAbsence, postSync } from "../../api.js";
 import Sidebar from "../../components/Sidebar.jsx";
 import AbsencesModuleChart from "../../components/AbsencesModuleChart.jsx";
+import { useAnalyseIA, BoutonAnalyseIA, CarteAnalyseIA } from "../../components/AnalyseIA.jsx";
 import PageEtudiants from "./PageEtudiants.jsx";
 import PageAlertes from "./PageAlertes.jsx";
 import PageDetailEtudiant from "./PageDetailEtudiant.jsx";
@@ -85,6 +86,54 @@ function Onglets({ actif, onChange }) {
   );
 }
 
+// Filières affichées dans le tableau des statuts (code en base -> libellé)
+const FILIERES_TABLEAU = [
+  { code: "IMS",    label: "IMS" },
+  { code: "GI-BDM", label: "GI-BDM" },
+  { code: "GI-EO",  label: "EO" },
+];
+
+function TableauStatutsFiliere({ lignes }) {
+  const parCode = Object.fromEntries((lignes ?? []).map(l => [l.filiere, l]));
+  const colonnes = [
+    { key: "exclu",    label: "🔴 Exclus",          color: "#dc2626" },
+    { key: "averti",   label: "🟡 Avertis",         color: "#d97706" },
+    { key: "autorise", label: "🟢 Rien à signaler", color: "#16a34a" },
+  ];
+  return (
+    <section className="mb-6 overflow-hidden rounded-xl bg-white shadow-sm">
+      <div className="p-6 pb-4">
+        <SectionTitre>Répartition des statuts par filière</SectionTitre>
+      </div>
+      <table className="w-full border-collapse text-sm">
+        <thead>
+          <tr className="bg-[#1e3a5f] text-white">
+            <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wide">Filière</th>
+            {colonnes.map(c => (
+              <th key={c.key} className="px-6 py-3 text-center text-xs font-semibold uppercase tracking-wide">{c.label}</th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {FILIERES_TABLEAU.map((f, i) => {
+            const l = parCode[f.code];
+            return (
+              <tr key={f.code} className={i % 2 === 0 ? "bg-white" : "bg-gray-50"}>
+                <td className="px-6 py-3 font-semibold text-gray-700">{f.label}</td>
+                {colonnes.map(c => (
+                  <td key={c.key} className="px-6 py-3 text-center font-bold" style={{ color: l ? c.color : "#94a3b8" }}>
+                    {l ? l[c.key] : "—"}
+                  </td>
+                ))}
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </section>
+  );
+}
+
 const TOOLTIP_STYLE = { fontSize: 12, borderRadius: 6, border: "1px solid #E2E8F0" };
 const HAUTEUR_TOP = 280;
 
@@ -105,16 +154,19 @@ function labelPart({ cx, cy, midAngle, innerRadius, outerRadius, percent }) {
 function VueEnsemble() {
   const [stats, setStats]         = useState(null);
   const [tauxAbs, setTauxAbs]     = useState(null);
+  const [parFiliereStats, setParFiliereStats] = useState(null);
   const [error, setError]         = useState(null);
   const [loading, setLoading]     = useState(true);
   const [onglet, setOnglet]       = useState("general");
+  const ia = useAnalyseIA("admin");
 
   useEffect(() => {
-    Promise.all([getStats(), getStatsTauxAbsence().catch(() => null)])
-      .then(([s, t]) => {
+    Promise.all([getStats(), getStatsTauxAbsence().catch(() => null), getStatsParFiliere().catch(() => null)])
+      .then(([s, t, f]) => {
         if (s.erreur) throw new Error();
         setStats(s);
         setTauxAbs(t);
+        setParFiliereStats(Array.isArray(f) ? f : null);
       })
       .catch(() => setError("Connexion au serveur impossible. Vérifiez que le backend tourne sur le port 5050."))
       .finally(() => setLoading(false));
@@ -139,6 +191,31 @@ function VueEnsemble() {
     { name: "Exclu",           value: stats.exclu,    color: "#ef4444" },
   ].filter(d => d.value > 0);
 
+  // Filière avec le plus d'étudiants exclus ou avertis
+  const filiereAlerte = (parFiliereStats ?? []).reduce(
+    (pire, f) => (!pire || f.exclu + f.averti > pire.exclu + pire.averti ? f : pire), null);
+
+  function analyserIA() {
+    ia.lancer({
+      kpis: {
+        total_etudiants:  stats.total_etudiants,
+        en_alerte:        stats.total_alertes,
+        exclus:           stats.exclu,
+        avertis:          stats.averti,
+        rien_a_signaler:  stats.autorise,
+        total_absences_non_justifiees: stats.total_abs_nj,
+      },
+      top3_absenteistes: (tauxAbs?.top10 ?? []).slice(0, 3).map(e => ({
+        nom: `${e.prenom} ${e.nom}`, filiere: e.filiere,
+        taux_absence_cumule_pct: e.taux_absence, semaine: e.semaine,
+      })),
+      filiere_plus_en_alerte: filiereAlerte && {
+        filiere: filiereAlerte.filiere, exclus: filiereAlerte.exclu,
+        avertis: filiereAlerte.averti, rien_a_signaler: filiereAlerte.autorise,
+      },
+    });
+  }
+
   const kpis = [
     { label: "Total étudiants", value: stats.total_etudiants, color: "#2563eb", icon: "⊞" },
     { label: "En alerte",       value: stats.total_alertes,   color: "#f97316", icon: "◉" },
@@ -150,12 +227,17 @@ function VueEnsemble() {
 
   return (
     <div>
-      <h2 style={{ fontSize: 18, fontWeight: 700, color: "#1a3a6b", marginBottom: 24 }}>Vue d'ensemble</h2>
+      <div className="mb-6 flex items-center justify-between gap-4">
+        <h2 style={{ fontSize: 18, fontWeight: 700, color: "#1a3a6b", margin: 0 }}>Vue d'ensemble</h2>
+        <BoutonAnalyseIA ia={ia} onClick={analyserIA} />
+      </div>
 
       {/* KPIs — une seule ligne */}
       <div className="mb-6 grid grid-cols-6 gap-4">
         {kpis.map(k => <KpiTile key={k.label} {...k} />)}
       </div>
+
+      <CarteAnalyseIA ia={ia} />
 
       <Onglets actif={onglet} onChange={setOnglet} />
 
@@ -219,6 +301,7 @@ function VueEnsemble() {
         </section>
       </div>
       )}
+      {onglet === "general" && <TableauStatutsFiliere lignes={parFiliereStats} />}
 
       {/* Onglet 2 — évolution par filière, pleine largeur */}
       {onglet === "filiere" && (

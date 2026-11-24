@@ -1,6 +1,7 @@
 import { useState } from "react";
 import Login from "./components/Login.jsx";
 import ResetPassword from "./pages/ResetPassword.jsx";
+import ChangePassword from "./pages/ChangePassword.jsx";
 import DashboardEtudiant from "./pages/etudiant/DashboardEtudiant.jsx";
 import DashboardProfesseur from "./pages/professeur/DashboardProfesseur.jsx";
 import DashboardAdmin from "./pages/admin/DashboardAdmin.jsx";
@@ -74,6 +75,16 @@ export default function App() {
   }
 
   if (!session) return <Login onLogin={handleLogin} />;
+
+  if (session.role === "etudiant" && session.data.must_change_password) {
+    return (
+      <ChangePassword
+        prenom={session.data.prenom}
+        onDone={() => handleLogin("etudiant", { ...session.data, must_change_password: false })}
+        onLogout={handleLogout}
+      />
+    );
+  }
 
   if (session.role === "etudiant") {
     return <DashboardEtudiant idEtudiant={session.data.id_etudiant} onLogout={handleLogout} />;

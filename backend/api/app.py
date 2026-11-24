@@ -5,15 +5,14 @@ import json
 import os
 import secrets
 import sqlite3
-import string
-import unicodedata
 from collections import defaultdict
 from datetime import datetime, timedelta
 from pathlib import Path
 
+import bcrypt
 import numpy as np
 import pandas as pd
-from flask import Flask, jsonify, request
+from flask import Flask, g, jsonify, request
 from flask_cors import CORS
 from dotenv import load_dotenv
 
@@ -33,12 +32,12 @@ from backend.agent.ia_agent import (
     send_email          as _send_email,
 )
 from backend.agent.email_agent import init_alerts_db, process_student_alerts, get_alert_history
-from backend.database.import_notes import (
-    import_notes, preview_notes, ensure_notes_schema, cle_nom, id_inscription_provisoire,
-)
+from backend.agent.groq_agent import analyser as analyser_ia, IAIndisponible
+from backend.database.import_notes import ensure_notes_schema
 from backend.database.import_planning import (
-    import_planning, resume_planning, ensure_planning_schema, get_date_debut, numero_semaine,
+    resume_planning, ensure_planning_schema, get_date_debut, numero_semaine,
 )
+from backend.database.groupe import ensure_groupe_column, groupe_depuis_cursus, normaliser_groupe
 from backend.database.import_performance import (
     import_performance, performance_etudiant, ensure_performance_schema, annee_scolaire_courante,
     moyennes_par_etudiant,
@@ -47,6 +46,17 @@ from backend.analysis.indicateurs import taux_absence_cumulatif, taux_absence_gl
 from backend.api.auth import (
     create_token, require_auth, require_role, public, acces_etudiant_refuse, verifier_protection,
 )
+from backend.api.imports.common import (
+    CACHE as _cache,
+    hash_password as _hash_password, gen_email as _gen_email, gen_mot_de_passe as _gen_mot_de_passe,
+    html_credentials as _html_credentials, cle_colonne as _cle_colonne,
+    traiter_fichier_xlsx as _traiter_fichier_xlsx,
+)
+from backend.api.imports.import_etudiants import import_etudiants_csv, _gen_mot_de_passe_temporaire
+from backend.api.imports.import_absences import import_absences_csv
+from backend.api.imports.import_planning import import_planning_route
+from backend.api.imports.import_notes import import_notes_route, import_notes_preview
+from backend.api.imports.import_modules import import_modules_route
 
 app = Flask(__name__)
 CORS(app)
@@ -109,7 +119,34 @@ def _init_professeurs():
 
 _init_professeurs()
 
+
+def _init_users_must_change_password():
+    """Comptes créés par import CSV : mot de passe temporaire à changer à la 1re connexion."""
+    conn = sqlite3.connect(DB_PATH)
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(users)").fetchall()}
+    if "must_change_password" not in cols:
+        conn.execute("ALTER TABLE users ADD COLUMN must_change_password INTEGER NOT NULL DEFAULT 0")
+        conn.commit()
+    conn.close()
+
+_init_users_must_change_password()
+
+
+def _init_password_version():
+    """Colonne password_version ('sha256' | 'bcrypt') sur users et professeurs.
+    Les comptes existants sont en SHA-256 : ils passent en bcrypt à leur prochaine connexion."""
+    conn = sqlite3.connect(DB_PATH)
+    for table in ("users", "professeurs"):
+        cols = {r[1] for r in conn.execute(f"PRAGMA table_info({table})").fetchall()}
+        if cols and "password_version" not in cols:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN password_version TEXT NOT NULL DEFAULT 'sha256'")
+    conn.commit()
+    conn.close()
+
+_init_password_version()
+
 _conn = sqlite3.connect(DB_PATH)
+ensure_groupe_column(_conn)  # etudiants.groupe (ALTER TABLE) + remplissage depuis cursus
 ensure_notes_schema(_conn)
 ensure_planning_schema(_conn)
 ensure_performance_schema(_conn)
@@ -124,8 +161,21 @@ def _db():
     return conn
 
 
-def _hash_password(password: str) -> str:
-    return hashlib.sha256(password.encode("utf-8")).hexdigest()
+def _verify_password(password: str, stored_hash: str, version: str | None) -> bool:
+    """Vérifie selon l'algo du compte : bcrypt, ou SHA-256 non salé (anciens comptes)."""
+    if not stored_hash:
+        return False
+    if version == "bcrypt" or stored_hash.startswith("$2"):
+        try:
+            return bcrypt.checkpw(password.encode("utf-8"), stored_hash.encode("ascii"))
+        except ValueError:
+            return False
+    legacy = hashlib.sha256(password.encode("utf-8")).hexdigest()
+    return secrets.compare_digest(legacy, stored_hash)
+
+
+def _needs_rehash(stored_hash: str, version: str | None) -> bool:
+    return not (version == "bcrypt" and stored_hash.startswith("$2"))
 
 
 def _to_python(obj):
@@ -145,92 +195,9 @@ def _serialize(obj):
     return _to_python(obj)
 
 
-def _gen_email(prenom: str, nom: str) -> str:
-    def clean(s):
-        s = unicodedata.normalize("NFD", s).encode("ascii", "ignore").decode()
-        return s.lower().strip().replace(" ", "-")
-    return f"{clean(prenom)}.{clean(nom)}@esith.net"
-
-
-import re as _re
-
-def _cellule(row, col: str) -> str:
-    """Valeur texte d'une cellule du fichier absences ('' si vide / NaN)."""
-    v = row.get(col, "")
-    return "" if pd.isna(v) else str(v).strip()
-
-
-def _find_filiere_for_csv(conn, session_programme: str, cursus: str):
-    """Déduit id_filiere depuis SessionProgramme/Cursus du CSV Konosys. Retourne int ou None."""
-    def _norm(s):
-        return unicodedata.normalize("NFD", str(s or "")).encode("ascii", "ignore").decode().lower().strip()
-
-    sp  = (session_programme or "").strip()
-    cur = (cursus or "").strip()
-
-    # 1. Étudiant existant avec même session_programme → réutilise son id_filiere
-    if sp and _norm(sp) != "nan":
-        row = conn.execute(
-            "SELECT id_filiere FROM etudiants"
-            " WHERE session_programme=? AND id_filiere IS NOT NULL LIMIT 1",
-            (sp,),
-        ).fetchone()
-        if row:
-            return int(row[0])
-
-    # 2. Extraire le code groupe : depuis Cursus (S3-BDM2G2 → BDM2G2) ou premier token du SP
-    group_code = ""
-    if cur and _norm(cur) != "nan" and "-" in cur:
-        group_code = cur.split("-", 1)[1]          # BDM2G2
-    elif sp and _norm(sp) != "nan" and sp.split():
-        group_code = sp.split()[0]                  # BDM2G2
-
-    if not group_code:
-        return None
-
-    # 3. Correspondance directe sur code filière
-    row = conn.execute(
-        "SELECT id FROM filieres WHERE UPPER(code)=UPPER(?)", (group_code,)
-    ).fetchone()
-    if row:
-        return int(row[0])
-
-    # 4. Préfixe alpha (BDM2G2 → BDM, IMS2G1 → IMS, EO2G2_B → EO)
-    m = _re.match(r"^([A-Za-z]+(?:-[A-Za-z]+)*)", group_code)
-    if not m:
-        return None
-    prefix = m.group(1).upper()
-
-    # Détecter le niveau dans SessionProgramme (1 ou 2)
-    niveau_num = None
-    m_niv = _re.search(r"\b([12])[eè]", _norm(sp))
-    if m_niv:
-        niveau_num = m_niv.group(1)
-
-    candidates = conn.execute(
-        "SELECT id, code, niveau FROM filieres"
-        " WHERE UPPER(code) LIKE ? OR UPPER(code) LIKE ? OR UPPER(code)=?",
-        (f"%{prefix}%", f"GI-{prefix}%", prefix),
-    ).fetchall()
-
-    if not candidates:
-        return None
-    if len(candidates) == 1:
-        return int(candidates[0][0])
-
-    # Filtrer par niveau si détecté
-    if niveau_num:
-        filtered = [c for c in candidates if c[2] and c[2].startswith(niveau_num)]
-        if filtered:
-            return int(min(filtered, key=lambda c: len(c[1]))[0])
-
-    # Prendre la filière au code le plus court (code de base)
-    return int(min(candidates, key=lambda c: len(c[1]))[0])
-
 
 # ── Cache mémoire ─────────────────────────────────────────────────────────────
 
-_cache: dict = {"data": None}
 
 
 def _charger_tout():
@@ -283,48 +250,23 @@ def _envoyer_alertes_etudiants_apres_sync(profils: list, nouvelles_absences: pd.
 
 # ── Auth helpers ──────────────────────────────────────────────────────────────
 
+COMPTE_INTROUVABLE = "Compte introuvable. Contactez l'administration."
+
+
 def _check_email_db(email: str) -> dict:
+    """Un étudiant ne peut se connecter que si l'administration lui a créé un compte
+    (import CSV ou ajout manuel) : pas d'auto-inscription."""
     conn = _db()
-    et_row = conn.execute(
-        "SELECT id, nom, prenom FROM etudiants WHERE LOWER(email) = LOWER(?)", (email,)
-    ).fetchone()
-    if not et_row:
-        conn.close()
-        return {"exists": False, "has_password": False, "prenom": ""}
-    u_row = conn.execute(
-        "SELECT password_hash FROM users WHERE id_etudiant = ?", (et_row["id"],)
+    row = conn.execute(
+        "SELECT e.prenom, u.password_hash FROM etudiants e"
+        " JOIN users u ON u.id_etudiant = e.id"
+        " WHERE LOWER(e.email) = LOWER(?)",
+        (email,),
     ).fetchone()
     conn.close()
-    return {
-        "exists": True,
-        "has_password": u_row is not None and bool(u_row["password_hash"]),
-        "prenom": et_row["prenom"],
-    }
-
-
-def _register_db(email: str, password: str) -> dict:
-    conn = _db()
-    et_row = conn.execute(
-        "SELECT id FROM etudiants WHERE LOWER(email) = LOWER(?)", (email,)
-    ).fetchone()
-    if not et_row:
-        conn.close()
-        return {"success": False, "error": "Email non reconnu"}
-    existing = conn.execute(
-        "SELECT id FROM users WHERE id_etudiant = ?", (et_row["id"],)
-    ).fetchone()
-    if existing:
-        conn.close()
-        return {"success": False, "error": "Un mot de passe existe déjà"}
-    pw_hash = _hash_password(password)
-    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    conn.execute(
-        "INSERT INTO users (id_etudiant, email, password_hash, created_at) VALUES (?, ?, ?, ?)",
-        (et_row["id"], email.lower(), pw_hash, now),
-    )
-    conn.commit()
-    conn.close()
-    return {"success": True}
+    if not row or not row["password_hash"]:
+        return {"exists": False, "has_password": False, "prenom": "", "error": COMPTE_INTROUVABLE}
+    return {"exists": True, "has_password": True, "prenom": row["prenom"]}
 
 
 def _login_db(email: str, password: str) -> dict:
@@ -339,18 +281,25 @@ def _login_db(email: str, password: str) -> dict:
     ).fetchone()
     if not et_row:
         conn.close()
-        return {"success": False, "error": "Email non reconnu"}
+        return {"success": False, "error": COMPTE_INTROUVABLE}
     u_row = conn.execute(
-        "SELECT id, password_hash FROM users WHERE id_etudiant = ?", (et_row["id"],)
+        "SELECT id, password_hash, password_version, must_change_password FROM users WHERE id_etudiant = ?",
+        (et_row["id"],),
     ).fetchone()
     if not u_row:
         conn.close()
-        return {"success": False, "error": "Aucun compte trouvé pour cet email"}
-    if u_row["password_hash"] != _hash_password(password):
+        return {"success": False, "error": COMPTE_INTROUVABLE}
+    if not _verify_password(password, u_row["password_hash"], u_row["password_version"]):
         conn.close()
         return {"success": False, "error": "Mot de passe incorrect"}
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     conn.execute("UPDATE users SET last_login = ? WHERE id = ?", (now, u_row["id"]))
+    if _needs_rehash(u_row["password_hash"], u_row["password_version"]):
+        # Migration progressive SHA-256 → bcrypt, le mot de passe en clair étant connu ici
+        conn.execute(
+            "UPDATE users SET password_hash = ?, password_version = 'bcrypt' WHERE id = ?",
+            (_hash_password(password), u_row["id"]),
+        )
     conn.commit()
     conn.close()
     return {"success": True, "etudiant": {
@@ -360,6 +309,7 @@ def _login_db(email: str, password: str) -> dict:
         "email":  et_row["email"],
         "filiere": et_row["code_filiere"] or "",
         "annee":   et_row["annee"] or "",
+        "must_change_password": bool(u_row["must_change_password"]),
     }}
 
 
@@ -381,6 +331,39 @@ def stats():
         "autorise": sum(1 for p in profils if p.nb_modules_exclu == 0 and p.nb_modules_averti == 0),
         "total_abs_nj": sum(p.total_abs_nj for p in profils),
     })
+
+
+@app.route("/api/stats/par-filiere")
+@require_auth
+@require_role("admin")
+def stats_par_filiere():
+    """Statut global des étudiants (même règle que /api/stats), par code filière."""
+    df_abs, profils = _get_data()
+    if not profils:
+        return jsonify({"erreur": "Base SQLite vide ou introuvable"}), 404
+    par_filiere: dict = defaultdict(lambda: {"exclu": 0, "averti": 0, "autorise": 0})
+    for p in profils:
+        cle = "exclu" if p.nb_modules_exclu > 0 else "averti" if p.nb_modules_averti > 0 else "autorise"
+        par_filiere[p.code_filiere or "—"][cle] += 1
+    return jsonify([{"filiere": f, **c} for f, c in sorted(par_filiere.items())])
+
+
+@app.route("/api/ia/analyse", methods=["POST"])
+@require_auth
+def ia_analyse():
+    """Résumé en langage naturel des statistiques envoyées, généré par un LLM (API Groq)."""
+    payload = request.get_json(silent=True) or {}
+    role    = payload.get("role")
+    donnees = payload.get("data")
+    if role not in ("admin", "etudiant") or not isinstance(donnees, dict):
+        return jsonify({"erreur": "Paramètres attendus : role (admin|etudiant) et data (objet)"}), 400
+    # le prompt « administration » est réservé aux comptes admin
+    if role == "admin" and g.user.get("role") != "admin":
+        return jsonify({"erreur": "Accès refusé"}), 403
+    try:
+        return jsonify({"analyse": analyser_ia(role, donnees)})
+    except IAIndisponible as exc:  # l'app continue : le message d'indisponibilité tient lieu d'analyse
+        return jsonify({"analyse": str(exc)})
 
 
 @app.route("/api/stats/taux-absence")
@@ -600,255 +583,6 @@ def alertes():
     return jsonify(result)
 
 
-# ── Routes — Import CSV absences ──────────────────────────────────────────────
-
-@app.route("/api/import-absences-csv", methods=["POST"])
-@require_auth
-@require_role("admin")
-def import_absences_csv():
-    if "file" not in request.files:
-        return jsonify({"error": "Aucun fichier fourni"}), 400
-    uploaded = request.files["file"]
-    if not uploaded.filename:
-        return jsonify({"error": "Fichier vide"}), 400
-
-    # Lecture CSV/Excel
-    try:
-        fname = uploaded.filename.lower()
-        if fname.endswith((".xlsx", ".xls")):
-            df = pd.read_excel(uploaded)
-        else:
-            raw = uploaded.read().decode("utf-8-sig", errors="replace")
-            df = None
-            for sep in [";", ",", "\t"]:
-                try:
-                    tmp = pd.read_csv(io.StringIO(raw), sep=sep)
-                    if len(tmp.columns) >= 5:
-                        df = tmp
-                        break
-                except Exception:
-                    continue
-            if df is None:
-                df = pd.read_csv(io.StringIO(raw))
-    except Exception as e:
-        return jsonify({"error": f"Erreur lecture fichier : {e}"}), 400
-
-    df.columns = [str(c).strip() for c in df.columns]
-
-    stats = {
-        "lignes_traitees": 0,
-        "absences_ajoutees": 0,
-        "doublons_ignores": 0,
-        "etudiants_crees_auto": [],                  # [{prenom, nom}]
-        "etudiants_non_crees_filiere_inconnue": [],  # [{id_inscr, nom, prenom, session_programme}]
-        "etudiants_homonymes": [],                   # [{nom, prenom, session_programme}] — lignes ignorées
-        "modules_crees": [],
-        "alertes_declenchees": 0,
-        "emails_envoyes": 0,
-    }
-
-    conn = _db()
-    etudiants_modules_touches: set = set()
-
-    # Index Nom + Prénom normalisés → étudiants (construit une fois pour tout le fichier)
-    index_noms: dict = defaultdict(list)
-    for r in conn.execute("SELECT id, nom, prenom, id_filiere, id_inscriptionsessionprogramme FROM etudiants"):
-        index_noms[cle_nom(r["nom"], r["prenom"])].append(dict(r))
-    codes_filiere = {r[0]: r[1] for r in conn.execute("SELECT id, code FROM filieres")}
-
-    for _, row in df.iterrows():
-        stats["lignes_traitees"] += 1
-
-        id_absence = str(row.get("id_absence", "")).strip()
-        if not id_absence or id_absence == "nan":
-            id_absence = ""
-
-        nom_csv    = _cellule(row, "Nom")
-        prenom_csv = _cellule(row, "Prenom")
-        sp_csv     = _cellule(row, "SessionProgramme")
-        cursus_csv = _cellule(row, "Cursus")
-        id_inscr   = _cellule(row, "id_inscriptionsessionprogramme")
-        if id_inscr.endswith(".0"):  # pandas lit parfois les entiers en float
-            id_inscr = id_inscr[:-2]
-        if not nom_csv or not prenom_csv:
-            continue
-
-        # Recherche UNIQUEMENT par Nom + Prénom normalisés (sans accents, minuscules)
-        candidats = index_noms.get(cle_nom(nom_csv, prenom_csv), [])
-        if len(candidats) > 1:
-            # Homonymes : on départage par la filière du fichier (code, tous niveaux)
-            id_fil = _find_filiere_for_csv(conn, sp_csv, cursus_csv)
-            code = codes_filiere.get(id_fil)
-            candidats = [c for c in candidats if code and codes_filiere.get(c["id_filiere"]) == code]
-            if len(candidats) != 1:
-                if not any(x["nom"] == nom_csv and x["prenom"] == prenom_csv for x in stats["etudiants_homonymes"]):
-                    stats["etudiants_homonymes"].append({"nom": nom_csv, "prenom": prenom_csv, "session_programme": sp_csv})
-                continue
-
-        if candidats:
-            et = candidats[0]
-            # Étudiant créé par l'import de notes (id provisoire < 0) : on lui attribue le vrai id Konosys
-            if et["id_inscriptionsessionprogramme"] < 0 and id_inscr.isdigit() and not conn.execute(
-                "SELECT 1 FROM etudiants WHERE id_inscriptionsessionprogramme=?", (int(id_inscr),)
-            ).fetchone():
-                conn.execute(
-                    "UPDATE etudiants SET id_inscriptionsessionprogramme=?,"
-                    " session_programme=COALESCE(?, session_programme), cursus=COALESCE(?, cursus)"
-                    " WHERE id=?",
-                    (int(id_inscr), sp_csv or None, cursus_csv or None, et["id"]),
-                )
-                et["id_inscriptionsessionprogramme"] = int(id_inscr)
-                conn.commit()
-        else:
-            id_filiere_auto = _find_filiere_for_csv(conn, sp_csv, cursus_csv)
-            if id_filiere_auto is None:
-                if not any(x["nom"] == nom_csv and x["prenom"] == prenom_csv
-                           for x in stats["etudiants_non_crees_filiere_inconnue"]):
-                    stats["etudiants_non_crees_filiere_inconnue"].append({
-                        "id_inscr": id_inscr, "nom": nom_csv, "prenom": prenom_csv,
-                        "session_programme": sp_csv,
-                    })
-                continue
-
-            # id Konosys réel s'il est libre, sinon id provisoire (colonne NOT NULL UNIQUE)
-            if id_inscr.isdigit() and not conn.execute(
-                "SELECT 1 FROM etudiants WHERE id_inscriptionsessionprogramme=?", (int(id_inscr),)
-            ).fetchone():
-                id_insc_db = int(id_inscr)
-            else:
-                id_insc_db = id_inscription_provisoire(conn)
-
-            email_auto = _gen_email(prenom_csv, nom_csv)
-            if conn.execute("SELECT 1 FROM etudiants WHERE email=?", (email_auto,)).fetchone():
-                stats["etudiants_homonymes"].append({"nom": nom_csv, "prenom": prenom_csv,
-                                                     "session_programme": f"email {email_auto} déjà utilisé"})
-                continue
-            cur_ins = conn.execute(
-                "INSERT INTO etudiants"
-                " (id_inscriptionsessionprogramme, nom, prenom, email, id_filiere, session_programme, cursus)"
-                " VALUES (?, ?, ?, ?, ?, ?, ?)",
-                (id_insc_db, nom_csv, prenom_csv, email_auto,
-                 id_filiere_auto, sp_csv or None, cursus_csv or None),
-            )
-            conn.commit()
-            et = {"id": cur_ins.lastrowid, "id_filiere": id_filiere_auto,
-                  "id_inscriptionsessionprogramme": id_insc_db}
-            index_noms[cle_nom(nom_csv, prenom_csv)] = [et]
-            stats["etudiants_crees_auto"].append({"prenom": prenom_csv, "nom": nom_csv})
-
-        id_etudiant = int(et["id"])
-        id_filiere  = et["id_filiere"]
-
-        # Doublon check par (id_absence_konosys, id_etudiant) — clé composée obligatoire
-        # car Konosys réutilise les mêmes IDs séquentiels par export (pas globalement uniques)
-        if id_absence:
-            if conn.execute(
-                "SELECT id FROM absences WHERE id_absence_konosys=? AND id_etudiant=?",
-                (id_absence, id_etudiant),
-            ).fetchone():
-                stats["doublons_ignores"] += 1
-                continue
-
-        module_nom = str(row.get("Module", "")).strip()
-        if not module_nom or module_nom == "nan":
-            continue
-
-        mod = conn.execute(
-            "SELECT id FROM modules WHERE nom=? AND (id_filiere=? OR id_filiere IS NULL) LIMIT 1",
-            (module_nom, id_filiere),
-        ).fetchone() or conn.execute(
-            "SELECT id FROM modules WHERE nom=? LIMIT 1", (module_nom,)
-        ).fetchone()
-
-        if mod:
-            id_module = int(mod[0])
-        else:
-            cur = conn.execute(
-                "INSERT INTO modules (nom, id_filiere, semestre, volume_heures) VALUES (?, ?, 'S0', 48)",
-                (module_nom, id_filiere),
-            )
-            id_module = cur.lastrowid
-            if module_nom not in stats["modules_crees"]:
-                stats["modules_crees"].append(module_nom)
-
-        # Parse date
-        try:
-            d = pd.to_datetime(str(row.get("DATE", "")), dayfirst=False, errors="coerce")
-            date_str = d.strftime("%Y-%m-%d") if not pd.isnull(d) else str(row.get("DATE", ""))
-        except Exception:
-            date_str = str(row.get("DATE", ""))
-
-        # Parse durée
-        try:
-            duree = float(str(row.get("DureeDecimal", row.get("Duree", "0"))).replace(",", ".").strip())
-        except Exception:
-            duree = 0.0
-
-        excuse_val = str(row.get("Excuse", "Non")).strip().lower()
-        justifiee  = excuse_val in ("oui", "yes", "true", "1", "o")
-
-        seance = str(row.get("Seance", "")).strip()
-        heure  = str(row.get("Heure",  "")).strip()
-        motif  = str(row.get("Motif",  "")).strip()
-
-        conn.execute(
-            "INSERT INTO absences"
-            " (id_absence_konosys, id_etudiant, id_module, module_nom, date_absence,"
-            "  seance, heure, duree_heures, justifiee, motif)"
-            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (id_absence or None, id_etudiant, id_module, module_nom, date_str,
-             seance, heure, duree, justifiee, motif),
-        )
-        stats["absences_ajoutees"] += 1
-        etudiants_modules_touches.add((id_etudiant, id_module))
-
-    conn.commit()
-
-    # Recalcul taux + envoi automatique
-    for id_etudiant, id_module in etudiants_modules_touches:
-        tr = conn.execute("""
-            SELECT
-                COALESCE(SUM(CASE WHEN NOT justifiee THEN duree_heures ELSE 0.0 END), 0),
-                COALESCE(SUM(duree_heures), 0),
-                COALESCE(MAX(m.volume_heures), 48)
-            FROM absences a
-            LEFT JOIN modules m ON a.id_module = m.id
-            WHERE a.id_etudiant=? AND a.id_module=?
-        """, (id_etudiant, id_module)).fetchone()
-
-        heures_nj    = float(tr[0])
-        heures_total = float(tr[1])
-        volume       = max(int(tr[2]), 1)
-        taux_nj      = round(heures_nj    / volume * 100, 2)
-        taux_total   = round(heures_total / volume * 100, 2)
-
-        if taux_total >= 50:
-            statut = "EXCLU"
-        elif taux_nj >= 20:
-            statut = "AVERTI"
-        else:
-            statut = "AUTORISE"
-
-        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        conn.execute("""
-            INSERT INTO alertes (id_etudiant, id_module, statut, taux_nj, taux_total, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?)
-            ON CONFLICT(id_etudiant, id_module) DO UPDATE SET
-                statut=excluded.statut, taux_nj=excluded.taux_nj,
-                taux_total=excluded.taux_total, updated_at=excluded.updated_at
-        """, (id_etudiant, id_module, statut, taux_nj, taux_total, now))
-        conn.commit()
-
-        if statut in ("AVERTI", "EXCLU"):
-            stats["alertes_declenchees"] += 1
-            results = envoyer_alerte_auto(id_etudiant, id_module, conn)
-            stats["emails_envoyes"] += sum(1 for r in results if r.get("sent"))
-
-    conn.close()
-    _cache["data"] = None
-    return jsonify(stats)
-
-
 # ── Routes — Gestion étudiants ────────────────────────────────────────────────
 
 @app.route("/api/sessions-programme")
@@ -969,16 +703,32 @@ def etudiants_ajouter():
                 "etudiant_existant": {"id": exist[0], "nom": exist[1], "prenom": exist[2]},
             })
 
+    groupe = normaliser_groupe(p.get("groupe")) or groupe_depuis_cursus(cursus, session_prog)
     cur = conn.execute(
-        "INSERT INTO etudiants (id_inscriptionsessionprogramme, nom, prenom, email, id_filiere, cursus, session_programme)"
-        " VALUES (?, ?, ?, ?, ?, ?, ?)",
-        (id_inscr or None, nom, prenom, email, id_filiere, cursus or None, session_prog or None),
+        "INSERT INTO etudiants (id_inscriptionsessionprogramme, nom, prenom, email, id_filiere, cursus,"
+        " session_programme, groupe) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        (id_inscr or None, nom, prenom, email, id_filiere, cursus or None, session_prog or None, groupe),
+    )
+    new_id = cur.lastrowid
+
+    # Compte créé par l'admin : mot de passe temporaire à changer à la 1re connexion
+    mdp = _gen_mot_de_passe_temporaire()
+    conn.execute(
+        "INSERT INTO users (id_etudiant, email, password_hash, password_version, created_at, must_change_password)"
+        " VALUES (?, ?, ?, 'bcrypt', ?, 1)",
+        (new_id, email.lower(), _hash_password(mdp), datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
     )
     conn.commit()
-    new_id = cur.lastrowid
     conn.close()
     _cache["data"] = None
-    return jsonify({"success": True, "etudiant": {"id": new_id, "nom": nom, "prenom": prenom, "email": email}})
+
+    try:
+        email_envoye = bool(_send_email(email, "Vos identifiants StudentTrack — ESITH",
+                                        _html_credentials(prenom, nom, email, mdp, role="Étudiant", temporaire=True)))
+    except Exception:
+        email_envoye = False
+    return jsonify({"success": True, "email_envoye": email_envoye,
+                    "etudiant": {"id": new_id, "nom": nom, "prenom": prenom, "email": email}})
 
 
 @app.route("/api/etudiants/<int:et_id>", methods=["PUT"])
@@ -1018,6 +768,10 @@ def etudiants_update(et_id: int):
         sets.append("session_programme=?"); vals.append(session_prog)
     if id_filiere:
         sets.append("id_filiere=?"); vals.append(id_filiere)
+    groupe = normaliser_groupe(p.get("groupe")) or (
+        groupe_depuis_cursus(cursus, session_prog) if (cursus or session_prog) else None)
+    if groupe:
+        sets.append("groupe=?"); vals.append(groupe)
     vals.append(et_id)
 
     conn.execute(f"UPDATE etudiants SET {', '.join(sets)} WHERE id=?", vals)
@@ -1156,22 +910,6 @@ def auth_check_email():
     return jsonify(_check_email_db(email))
 
 
-@app.route("/api/auth/register", methods=["POST"])
-@public
-def auth_register():
-    payload  = request.get_json(silent=True) or {}
-    email    = (payload.get("email")    or "").strip().lower()
-    password = (payload.get("password") or "")
-    if not email or not password:
-        return jsonify({"success": False, "error": "email et mot de passe requis"}), 400
-    if len(password) < 8:
-        return jsonify({"success": False, "error": "Le mot de passe doit contenir au moins 8 caractères"}), 400
-    result = _register_db(email, password)
-    if not result["success"]:
-        return jsonify(result), 400
-    return jsonify(result)
-
-
 @app.route("/api/auth/login", methods=["POST"])
 @public
 def auth_login():
@@ -1184,8 +922,46 @@ def auth_login():
     if not result["success"]:
         return jsonify(result), 401
     et = result["etudiant"]
-    result["token"] = create_token("etudiant", email=et["email"], id_etudiant=et["id_etudiant"])
+    result["token"] = create_token("etudiant", email=et["email"], id_etudiant=et["id_etudiant"],
+                                   must_change_password=et["must_change_password"])
     return jsonify(result)
+
+
+@app.route("/api/auth/change-password", methods=["POST"])
+@require_auth
+@require_role("etudiant")
+def auth_change_password():
+    """Changement de mot de passe par l'étudiant connecté (obligatoire après un mot de passe temporaire).
+    Renvoie un nouveau token sans la restriction « mot de passe temporaire »."""
+    payload  = request.get_json(silent=True) or {}
+    actuel   = payload.get("current_password") or ""
+    nouveau  = payload.get("new_password") or ""
+    id_et    = g.user.get("id_etudiant")
+    if id_et is None:
+        return jsonify({"success": False, "error": "Réservé aux comptes étudiants"}), 403
+    if len(nouveau) < 8:
+        return jsonify({"success": False, "error": "Le mot de passe doit contenir au moins 8 caractères"}), 400
+    if nouveau == actuel:
+        return jsonify({"success": False, "error": "Le nouveau mot de passe doit être différent de l'ancien"}), 400
+
+    conn = _db()
+    u_row = conn.execute(
+        "SELECT password_hash, password_version FROM users WHERE id_etudiant = ?", (id_et,)
+    ).fetchone()
+    if not u_row or not _verify_password(actuel, u_row["password_hash"], u_row["password_version"]):
+        conn.close()
+        return jsonify({"success": False, "error": "Mot de passe actuel incorrect"}), 400
+    conn.execute(
+        "UPDATE users SET password_hash = ?, password_version = 'bcrypt', must_change_password = 0"
+        " WHERE id_etudiant = ?",
+        (_hash_password(nouveau), id_et),
+    )
+    conn.commit()
+    conn.close()
+    return jsonify({
+        "success": True,
+        "token": create_token("etudiant", email=g.user.get("email", ""), id_etudiant=id_et),
+    })
 
 
 @app.route("/api/auth/admin-login", methods=["POST"])
@@ -1246,28 +1022,25 @@ def _mark_token_used(token: str):
     conn.close()
 
 
-def _update_user_password(id_etudiant: int, password_hash: str):
+def _update_user_password(id_etudiant: int, password_hash: str) -> bool:
+    """Met à jour le mot de passe d'un compte existant. Ne crée jamais de compte :
+    seule l'administration en crée (import CSV, ajout manuel)."""
     conn = _db()
-    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    existing = conn.execute(
-        "SELECT id FROM users WHERE id_etudiant=?", (id_etudiant,)
-    ).fetchone()
-    if existing:
-        conn.execute(
-            "UPDATE users SET password_hash=? WHERE id_etudiant=?",
-            (password_hash, id_etudiant),
-        )
-    else:
-        et = conn.execute(
-            "SELECT email FROM etudiants WHERE id=?", (id_etudiant,)
-        ).fetchone()
-        conn.execute(
-            "INSERT INTO users (id_etudiant, email, password_hash, created_at)"
-            " VALUES (?, ?, ?, ?)",
-            (id_etudiant, et["email"] if et else "", password_hash, now),
-        )
+    cur = conn.execute(
+        "UPDATE users SET password_hash=?, password_version='bcrypt', must_change_password=0"
+        " WHERE id_etudiant=?",
+        (password_hash, id_etudiant),
+    )
     conn.commit()
     conn.close()
+    return cur.rowcount > 0
+
+
+def _has_user_account(id_etudiant: int) -> bool:
+    conn = _db()
+    row = conn.execute("SELECT 1 FROM users WHERE id_etudiant=?", (id_etudiant,)).fetchone()
+    conn.close()
+    return row is not None
 
 
 @app.route("/api/auth/forgot-password", methods=["POST"])
@@ -1281,7 +1054,7 @@ def forgot_password():
         return jsonify(generic)
 
     etudiant = _get_etudiant_by_email(email)
-    if not etudiant:
+    if not etudiant or not _has_user_account(etudiant["id"]):
         return jsonify(generic)
 
     token      = secrets.token_urlsafe(32)
@@ -1345,85 +1118,19 @@ def reset_password_route():
             "error": "Le mot de passe doit contenir au moins 8 caractères.",
         }), 400
 
-    _update_user_password(reset_entry["id_etudiant"], _hash_password(new_password))
+    if not _update_user_password(reset_entry["id_etudiant"], _hash_password(new_password)):
+        return jsonify({"success": False, "error": COMPTE_INTROUVABLE}), 400
     _mark_token_used(token)
     return jsonify({"success": True, "message": "Mot de passe réinitialisé avec succès."})
 
 
-# ── Routes — Import notes (moyennes Konosys) ──────────────────────────────────
-
-def _traiter_fichier_notes(traitement):
-    """Sauve le fichier notes uploadé (.xlsx/.xlsb) dans un fichier temporaire et applique traitement(path, nom)."""
-    if "file" not in request.files:
-        return None, (jsonify({"error": "Aucun fichier fourni"}), 400)
-    uploaded = request.files["file"]
-    ext = Path(uploaded.filename or "").suffix.lower()
-    if ext not in (".xlsx", ".xlsb"):
-        return None, (jsonify({"error": "Format non supporté — utilisez un fichier .xlsx ou .xlsb"}), 400)
-
-    import tempfile
-    tmp = tempfile.NamedTemporaryFile(suffix=ext, delete=False)
-    try:
-        uploaded.save(tmp)
-        tmp.close()
-        return traitement(tmp.name, uploaded.filename), None
-    except Exception as e:
-        return None, (jsonify({"error": f"Fichier illisible : {e}"}), 400)
-    finally:
-        tmp.close()
-        os.unlink(tmp.name)
-
-
-@app.route("/api/import-notes/preview", methods=["POST"])
-@require_auth
-@require_role("admin")
-def import_notes_preview():
-    apercu, err = _traiter_fichier_notes(lambda path, _nom: preview_notes(path))
-    return err or jsonify(apercu)
-
-
-@app.route("/api/import-notes", methods=["POST"])
-@require_auth
-@require_role("admin")
-def import_notes_route():
-    stats, err = _traiter_fichier_notes(lambda path, nom: import_notes(path, source_name=nom))
-    if err:
-        return err
-    _cache["data"] = None  # la moyenne affichée dans les profils vient des notes
-    return jsonify(stats)
-
-
 # ── Routes — Import planning hebdomadaire / moyennes brute-nette ──────────────
-
-def _traiter_fichier_xlsx(traitement):
-    """Comme _traiter_fichier_notes, mais .xlsx uniquement et erreurs de format renvoyées telles quelles."""
-    if "file" not in request.files:
-        return None, (jsonify({"error": "Aucun fichier fourni"}), 400)
-    uploaded = request.files["file"]
-    if Path(uploaded.filename or "").suffix.lower() != ".xlsx":
-        return None, (jsonify({"error": "Format non supporté — utilisez un fichier .xlsx"}), 400)
-    return _traiter_fichier_notes(traitement)
-
 
 @app.route("/api/planning")
 @require_auth
 @require_role("admin")
 def planning_resume():
     return jsonify(resume_planning())
-
-
-@app.route("/api/import-planning", methods=["POST"])
-@require_auth
-@require_role("admin")
-def import_planning_route():
-    date_debut = None
-    if request.form.get("date_debut"):
-        try:
-            date_debut = datetime.strptime(request.form["date_debut"], "%Y-%m-%d").date()
-        except ValueError:
-            return jsonify({"error": "Date de début invalide (format AAAA-MM-JJ)"}), 400
-    stats, err = _traiter_fichier_xlsx(lambda path, _nom: import_planning(path, date_debut))
-    return err or jsonify(stats)
 
 
 @app.route("/api/import-performance", methods=["POST"])
@@ -1467,43 +1174,6 @@ def alerts_history():
 
 
 # ── Routes — Gestion Professeurs ──────────────────────────────────────────────
-
-FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:5173").rstrip("/")
-
-
-def _gen_mot_de_passe(longueur: int = 10) -> str:
-    chars = string.ascii_letters + string.digits
-    return "".join(secrets.choice(chars) for _ in range(longueur))
-
-
-def _html_credentials(prenom: str, nom: str, email: str, mot_de_passe: str, reset: bool = False) -> str:
-    titre  = "Réinitialisation de mot de passe" if reset else "Bienvenue sur StudentTrack"
-    intro  = "Votre mot de passe StudentTrack a été réinitialisé." if reset else (
-        "Un compte StudentTrack a été créé pour vous."
-    )
-    return f"""
-<div style="font-family:Arial,sans-serif;max-width:560px;margin:0 auto">
-  <h2 style="color:#1a3a6b">{titre}</h2>
-  <p>Madame/Monsieur <strong>{prenom} {nom}</strong>,</p>
-  <p>{intro} Voici vos identifiants de connexion :</p>
-  <p style="background:#F8FAFC;border:1px solid #E2E8F0;border-radius:8px;padding:16px 20px;margin:20px 0">
-    <strong>Email :</strong> {email}<br>
-    <strong>Mot de passe :</strong> <code style="font-size:14px">{mot_de_passe}</code>
-  </p>
-  <p>Connectez-vous sur la plateforme en choisissant le rôle <strong>Professeur</strong>
-  et en saisissant ces identifiants.</p>
-  <p style="margin:24px 0">
-    <a href="{FRONTEND_URL}/"
-       style="background:#8DC63F;color:#fff;padding:12px 24px;text-decoration:none;
-              border-radius:6px;display:inline-block;font-weight:700">
-      {"Se connecter" if reset else "Première connexion"}
-    </a>
-  </p>
-  <p style="color:#64748b;font-size:12px">Nous vous recommandons de conserver ce mot de passe en lieu sûr.</p>
-  <hr style="border:none;border-top:1px solid #E2E8F0;margin:24px 0">
-  <p style="color:#94a3b8;font-size:11px">Service de la Scolarité — ESITH Casablanca — StudentTrack</p>
-</div>"""
-
 
 def _prof_modules(conn, prof_id: int) -> list:
     return [dict(r) for r in conn.execute(
@@ -1561,7 +1231,8 @@ def professeurs_ajouter():
 
     try:
         cur     = conn.execute(
-            "INSERT INTO professeurs (nom, prenom, email, password_hash, created_at) VALUES (?, ?, ?, ?, ?)",
+            "INSERT INTO professeurs (nom, prenom, email, password_hash, password_version, created_at)"
+            " VALUES (?, ?, ?, ?, 'bcrypt', ?)",
             (nom, prenom, email, pw_hash, now),
         )
         prof_id = cur.lastrowid
@@ -1592,11 +1263,6 @@ def professeurs_ajouter():
         "professeur":   {"id": prof_id, "nom": nom, "prenom": prenom, "email": email},
         "email_envoye": email_envoye,
     })
-
-
-def _cle_colonne(h) -> str:
-    h = unicodedata.normalize("NFD", str(h)).encode("ascii", "ignore").decode()
-    return h.strip().lower()
 
 
 def _modules_pour(conn, module: str, filiere: str) -> list[int]:
@@ -1655,7 +1321,8 @@ def professeurs_import_csv():
             continue
         mdp = _gen_mot_de_passe()
         cur = conn.execute(
-            "INSERT INTO professeurs (nom, prenom, email, password_hash, created_at) VALUES (?, ?, ?, ?, ?)",
+            "INSERT INTO professeurs (nom, prenom, email, password_hash, password_version, created_at)"
+            " VALUES (?, ?, ?, ?, 'bcrypt', ?)",
             (p["nom"], p["prenom"], email, _hash_password(mdp), now),
         )
         for module, filiere in p["modules"]:
@@ -1739,7 +1406,7 @@ def professeurs_reset_password(prof_id: int):
 
     mdp     = _gen_mot_de_passe()
     pw_hash = _hash_password(mdp)
-    conn.execute("UPDATE professeurs SET password_hash=? WHERE id=?", (pw_hash, prof_id))
+    conn.execute("UPDATE professeurs SET password_hash=?, password_version='bcrypt' WHERE id=?", (pw_hash, prof_id))
     conn.commit()
 
     nom, prenom, email = prof["nom"], prof["prenom"], prof["email"]
@@ -1786,16 +1453,25 @@ def auth_professeur_login():
 
     conn = _db()
     prof = conn.execute(
-        "SELECT id, nom, prenom, email, password_hash FROM professeurs WHERE LOWER(email)=?",
+        "SELECT id, nom, prenom, email, password_hash, password_version FROM professeurs WHERE LOWER(email)=?",
         (email,),
     ).fetchone()
 
-    if not prof or prof["password_hash"] != _hash_password(password):
+    if not prof:
+        conn.close()
+        return jsonify({"success": False, "error": COMPTE_INTROUVABLE}), 401
+    if not _verify_password(password, prof["password_hash"], prof["password_version"]):
         conn.close()
         return jsonify({"success": False, "error": "Email ou mot de passe incorrect"}), 401
 
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     conn.execute("UPDATE professeurs SET last_login=? WHERE id=?", (now, prof["id"]))
+    if _needs_rehash(prof["password_hash"], prof["password_version"]):
+        # Migration progressive SHA-256 → bcrypt
+        conn.execute(
+            "UPDATE professeurs SET password_hash=?, password_version='bcrypt' WHERE id=?",
+            (_hash_password(password), prof["id"]),
+        )
     mods = _prof_modules(conn, prof["id"])
     conn.commit()
     conn.close()
@@ -1811,6 +1487,16 @@ def auth_professeur_login():
             "modules": mods,
         },
     })
+
+
+# ── Routes — Imports (backend/api/imports/) ───────────────────────────────────
+
+app.add_url_rule("/api/etudiants/import-csv", view_func=import_etudiants_csv, methods=["POST"])
+app.add_url_rule("/api/import-absences-csv",  view_func=import_absences_csv,  methods=["POST"])
+app.add_url_rule("/api/import-planning",      view_func=import_planning_route, methods=["POST"])
+app.add_url_rule("/api/import-notes/preview", view_func=import_notes_preview, methods=["POST"])
+app.add_url_rule("/api/import-notes",         view_func=import_notes_route,   methods=["POST"])
+app.add_url_rule("/api/import-modules",       view_func=import_modules_route, methods=["POST"])
 
 
 verifier_protection(app)  # aucun endpoint /api/ sans @require_auth ni @public

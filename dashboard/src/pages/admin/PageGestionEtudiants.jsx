@@ -1,5 +1,5 @@
-import { useEffect, useState, useCallback } from "react";
-import { apiFetch } from "../../api.js";
+import { useEffect, useState, useCallback, useRef } from "react";
+import { apiFetch, importEtudiantsCsv } from "../../api.js";
 
 const BASE = "http://localhost:5050";
 const LIMIT = 20;
@@ -46,6 +46,10 @@ export default function PageGestionEtudiants() {
   const [page, setPage]       = useState(1);
   const [search, setSearch]   = useState("");
   const [loadingList, setLoadingList] = useState(true);
+
+  const [importing, setImporting]       = useState(false);
+  const [importResult, setImportResult] = useState(null);
+  const fileInput                       = useRef(null);
 
   const totalPages = Math.max(1, Math.ceil(total / LIMIT));
   const emailGenere = genEmail(form.prenom, form.nom);
@@ -153,6 +157,23 @@ export default function PageGestionEtudiants() {
     }
   }
 
+  async function handleImportCsv(e) {
+    const file = e.target.files?.[0];
+    e.target.value = "";  // permet de ré-importer le même fichier
+    if (!file) return;
+    setImporting(true);
+    setImportResult(null);
+    try {
+      const res = await importEtudiantsCsv(file);
+      setImportResult(res.success ? res : { error: res.error || "Erreur lors de l'import" });
+      if (res.success) { setPage(1); loadList(); }
+    } catch {
+      setImportResult({ error: "Erreur de connexion au serveur." });
+    } finally {
+      setImporting(false);
+    }
+  }
+
   async function handleDelete(et) {
     if (!window.confirm(`Supprimer ${et.prenom} ${et.nom} et toutes ses absences/alertes ?`)) return;
     try {
@@ -174,7 +195,56 @@ export default function PageGestionEtudiants() {
 
   return (
     <div>
-      <h2 style={{ fontSize: 18, fontWeight: 700, color: "#1a3a6b", marginBottom: 24 }}>Gestion des Étudiants</h2>
+      <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 24 }}>
+        <h2 style={{ fontSize: 18, fontWeight: 700, color: "#1a3a6b", margin: 0 }}>Gestion des Étudiants</h2>
+        <input ref={fileInput} type="file" accept=".csv,text/csv" onChange={handleImportCsv} style={{ display: "none" }} />
+        <button
+          onClick={() => fileInput.current?.click()}
+          disabled={importing}
+          title="Colonnes attendues : nom, prenom, groupe (ex. IMS2G1) — email généré : prenom.nom@esith.net"
+          style={{
+            marginLeft: "auto", padding: "8px 16px", borderRadius: 6, fontSize: 13, fontWeight: 600,
+            cursor: importing ? "not-allowed" : "pointer",
+            backgroundColor: importing ? "#E2E8F0" : "#FFFFFF",
+            color: importing ? "#64748b" : "#1a3a6b", border: "1px solid rgba(26,58,107,0.35)",
+          }}
+        >
+          {importing ? "Import et envoi des emails…" : "⇪ Importer CSV étudiants"}
+        </button>
+      </div>
+
+      {importResult && (
+        <div style={{
+          marginBottom: 20, padding: "12px 16px", borderRadius: 6, fontSize: 13, position: "relative",
+          backgroundColor: msgStyle[importResult.error ? "error" : "success"].bg,
+          border: `1px solid ${msgStyle[importResult.error ? "error" : "success"].border}`,
+          color: msgStyle[importResult.error ? "error" : "success"].color,
+        }}>
+          <button onClick={() => setImportResult(null)} aria-label="Fermer" style={{ position: "absolute", top: 6, right: 8, border: "none", background: "transparent", cursor: "pointer", color: "inherit", fontSize: 14 }}>×</button>
+          {importResult.error ? importResult.error : (
+            <>
+              <div style={{ fontWeight: 600 }}>
+                ✓ {importResult.ajoutes} étudiant{importResult.ajoutes !== 1 ? "s" : ""} ajouté{importResult.ajoutes !== 1 ? "s" : ""}
+                {importResult.comptes_crees > 0 && `, ${importResult.comptes_crees} compte${importResult.comptes_crees !== 1 ? "s" : ""} créé${importResult.comptes_crees !== 1 ? "s" : ""} pour des étudiants déjà en base`}
+                , {importResult.ignores} ignoré{importResult.ignores !== 1 ? "s" : ""} (compte déjà existant).
+              </div>
+              {importResult.emails_envoyes > 0 && (
+                <div style={{ marginTop: 4, fontSize: 12 }}>
+                  ✉ {importResult.emails_envoyes} email{importResult.emails_envoyes !== 1 ? "s" : ""} d'identifiants envoyé{importResult.emails_envoyes !== 1 ? "s" : ""}.
+                </div>
+              )}
+              {[
+                ["⚠ Email non envoyé (vérifiez Brevo)", importResult.emails_echoues],
+                ["⚠ Lignes rejetées", importResult.erreurs],
+              ].filter(([, l]) => l?.length).map(([titre, l]) => (
+                <div key={titre} style={{ marginTop: 8, fontSize: 12, color: "#b45309" }}>
+                  {titre} : {l.join(" · ")}
+                </div>
+              ))}
+            </>
+          )}
+        </div>
+      )}
 
       {/* Formulaire d'ajout */}
       <div style={{ backgroundColor: "#FFFFFF", border: "1px solid #E2E8F0", borderRadius: 8, padding: 24, marginBottom: 28, boxShadow: "0 1px 3px rgba(0,0,0,0.08)", maxWidth: 520 }}>

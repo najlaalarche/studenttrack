@@ -1,46 +1,9 @@
 import { useState } from "react";
-import { authProfesseurLogin, authCheckEmail, authRegister, authLogin, authAdminLogin, authForgotPassword } from "../api";
+import { authProfesseurLogin, authCheckEmail, authLogin, authAdminLogin, authForgotPassword } from "../api";
 
 const GREEN = "#8DC63F";
 const GREEN_DARK = "#6fa52e";
 
-function PasswordStrength({ password }) {
-  const len = password.length;
-  const hasUpper = /[A-Z]/.test(password);
-  const hasDigit = /\d/.test(password);
-  const hasSpecial = /[^A-Za-z0-9]/.test(password);
-  const score = (len >= 8 ? 1 : 0) + (hasUpper ? 1 : 0) + (hasDigit ? 1 : 0) + (hasSpecial ? 1 : 0);
-
-  if (!password) return null;
-
-  const levels = [
-    { label: "Faible", color: "#ef4444" },
-    { label: "Moyen", color: "#f59e0b" },
-    { label: "Fort", color: GREEN },
-  ];
-  const level = score <= 1 ? 0 : score <= 3 ? 1 : 2;
-  const { label, color } = levels[level];
-
-  return (
-    <div style={{ marginTop: 6 }}>
-      <div style={{ display: "flex", gap: 4, marginBottom: 4 }}>
-        {[0, 1, 2].map((i) => (
-          <div
-            key={i}
-            style={{
-              flex: 1,
-              height: 4,
-              borderRadius: 2,
-              background: i <= level ? color : "#e2e8f0",
-              transition: "background 0.2s",
-            }}
-          />
-        ))}
-      </div>
-      <div style={{ fontSize: 11, color, fontWeight: 600 }}>{label}</div>
-    </div>
-  );
-}
 
 function InputField({ label, type, placeholder, value, onChange, onKeyDown, rightEl }) {
   return (
@@ -81,13 +44,11 @@ export default function Login({ onLogin }) {
   const [role, setRole] = useState(null);
 
   // Étudiant auth state
-  const [step, setStep] = useState(1); // 1=email, 2a=login, 2b=register, 2c=not-found
+  const [step, setStep] = useState(1); // 1=email, 2a=login, 2c=compte introuvable
   const [email, setEmail] = useState("");
   const [prenom, setPrenom] = useState("");
   const [password, setPassword] = useState("");
-  const [confirmPassword, setConfirmPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
-  const [showConfirm, setShowConfirm] = useState(false);
   const [loading, setLoading] = useState(false);
 
   // Administration state
@@ -113,7 +74,6 @@ export default function Login({ onLogin }) {
     setStep(1);
     setEmail("");
     setPassword("");
-    setConfirmPassword("");
     setPrenom("");
     setFiliere("");
     setSemestre("Tous");
@@ -138,13 +98,8 @@ export default function Login({ onLogin }) {
     try {
       const res = await authCheckEmail(email);
       setPrenom(res.prenom || "");
-      if (!res.exists) {
-        setStep("2c");
-      } else if (res.has_password) {
-        setStep("2a");
-      } else {
-        setStep("2b");
-      }
+      // Pas d'auto-inscription : sans compte créé par l'administration, on bloque
+      setStep(res.exists && res.has_password ? "2a" : "2c");
     } catch {
       setError("Erreur de connexion au serveur");
     }
@@ -160,33 +115,6 @@ export default function Login({ onLogin }) {
         onLogin("etudiant", { email, ...res.etudiant });
       } else {
         setError(res.error || "Échec de la connexion");
-      }
-    } catch {
-      setError("Erreur de connexion au serveur");
-    }
-    setLoading(false);
-  };
-
-  const handleRegister = async () => {
-    if (password.length < 8) {
-      setError("Le mot de passe doit contenir au moins 8 caractères");
-      return;
-    }
-    if (password !== confirmPassword) {
-      setError("Les mots de passe ne correspondent pas");
-      return;
-    }
-    setError("");
-    setLoading(true);
-    try {
-      const res = await authRegister(email, password);
-      if (res.success) {
-        const loginRes = await authLogin(email, password);
-        if (loginRes.success) {
-          onLogin("etudiant", { email, ...loginRes.etudiant });
-        }
-      } else {
-        setError(res.error || "Erreur lors de la création du compte");
       }
     } catch {
       setError("Erreur de connexion au serveur");
@@ -447,57 +375,9 @@ const handleAdminLogin = async () => {
           </>
         )}
 
-        {role === "etudiant" && step === "2b" && (
-          <>
-            <div style={{ fontSize: 14, fontWeight: 600, color: "#1a2a4a", marginBottom: 4 }}>
-              Première connexion — créez votre mot de passe
-            </div>
-            <div style={{ fontSize: 12, color: "#64748b", marginBottom: 16 }}>{email}</div>
-            <InputField
-              label="Nouveau mot de passe"
-              type={showPassword ? "text" : "password"}
-              placeholder="Minimum 8 caractères"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              rightEl={
-                <span
-                  onClick={() => setShowPassword((v) => !v)}
-                  style={{ fontSize: 16, cursor: "pointer", color: "#94a3b8" }}
-                >
-                  {showPassword ? "👁" : "🙈"}
-                </span>
-              }
-            />
-            <PasswordStrength password={password} />
-            <div style={{ marginTop: 14 }}>
-              <InputField
-                label="Confirmer le mot de passe"
-                type={showConfirm ? "text" : "password"}
-                placeholder="Répéter le mot de passe"
-                value={confirmPassword}
-                onChange={(e) => setConfirmPassword(e.target.value)}
-                onKeyDown={(e) => e.key === "Enter" && handleRegister()}
-                rightEl={
-                  <span
-                    onClick={() => setShowConfirm((v) => !v)}
-                    style={{ fontSize: 16, cursor: "pointer", color: "#94a3b8" }}
-                  >
-                    {showConfirm ? "👁" : "🙈"}
-                  </span>
-                }
-              />
-            </div>
-            {error && <ErrorBox msg={error} />}
-            <button onClick={handleRegister} disabled={loading} style={btnStyle(loading)}>
-              {loading ? "Création..." : "Créer mon mot de passe →"}
-            </button>
-            <BackLink onClick={() => { setStep(1); setError(""); setPassword(""); setConfirmPassword(""); }} />
-          </>
-        )}
-
         {role === "etudiant" && step === "2c" && (
           <>
-            <ErrorBox msg="Cet email n'est pas reconnu dans le système ESITH" />
+            <ErrorBox msg="Compte introuvable. Contactez l'administration." />
             <BackLink onClick={() => { setStep(1); setError(""); }} />
           </>
         )}

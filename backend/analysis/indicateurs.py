@@ -2,7 +2,7 @@
 Taux d'absence cumulatif semaine par semaine (portail étudiant).
 
 Taux semaine N = Σ heures d'absence S1→N / Σ heures planifiées du groupe S1→N × 100
-  - heures planifiées : planning_seances (import hebdomadaire) pour le groupe de l'étudiant
+  - heures planifiées : planning_seances (import hebdomadaire) où planning_seances.groupe = etudiants.groupe
   - absences : justifiées + non justifiées, numérotées avec la même date de début d'année
   - seules les semaines présentes dans le planning du groupe sont comptées
 Taux de présence = 100 - taux d'absence.
@@ -12,19 +12,10 @@ import sqlite3
 from collections import defaultdict
 from datetime import date
 
+from backend.database.groupe import ensure_groupe_column
 from backend.database.import_planning import ensure_planning_schema, get_date_debut, numero_semaine
 
 _SEPARATEURS_GROUPES = re.compile(r"[,;/+]")
-
-
-def groupe_etudiant(cursus: str | None, session_programme: str | None) -> str | None:
-    """'S3-IMS2G1' -> 'IMS2G1' ; à défaut 1er mot de SessionProgramme ('IMS2G1 2ème année 2025-2026')."""
-    m = re.match(r"^S\d+-(.+)$", (cursus or "").strip(), re.IGNORECASE)
-    if m:
-        return m.group(1).strip().upper()
-    if session_programme and session_programme.strip():
-        return session_programme.split()[0].strip().upper()
-    return None
 
 
 def _groupes_seance(groupe: str) -> set[str]:
@@ -32,22 +23,24 @@ def _groupes_seance(groupe: str) -> set[str]:
     return {g.strip().upper() for g in _SEPARATEURS_GROUPES.split(groupe or "") if g.strip()}
 
 
-def taux_absence_cumulatif(conn: sqlite3.Connection, id_etudiant: int) -> dict | None:
+def taux_absence_cumulatif(conn: sqlite3.Connection, id_etudiant: int, _schema_ok: bool = False) -> dict | None:
     """None si l'étudiant n'existe pas ; sinon {"groupe", "date_debut", "semaines": [...]}."""
-    ensure_planning_schema(conn)
-    et = conn.execute(
-        "SELECT cursus, session_programme FROM etudiants WHERE id=?", (id_etudiant,)
-    ).fetchone()
+    if not _schema_ok:
+        ensure_planning_schema(conn)
+        ensure_groupe_column(conn)  # remplit le groupe des étudiants créés hors import CSV
+    et = conn.execute("SELECT groupe FROM etudiants WHERE id=?", (id_etudiant,)).fetchone()
     if not et:
         return None
-    groupe = groupe_etudiant(et[0], et[1])
+    groupe = (et[0] or "").strip().upper() or None
     debut = get_date_debut(conn)
 
     planifie = defaultdict(float)  # semaine -> heures planifiées
     if groupe:
+        # planning_seances.groupe = etudiants.groupe ; une séance commune peut lister plusieurs groupes
         for semaine, duree, groupes in conn.execute(
-            "SELECT numero_semaine, duree_heures, groupe FROM planning_seances WHERE groupe LIKE ?",
-            (f"%{groupe}%",),
+            "SELECT numero_semaine, duree_heures, groupe FROM planning_seances"
+            " WHERE groupe = ? OR groupe LIKE ?",
+            (groupe, f"%{groupe}%"),
         ).fetchall():
             if groupe in _groupes_seance(groupes):
                 planifie[semaine] += duree or 0
@@ -92,6 +85,7 @@ def taux_absence_global(conn: sqlite3.Connection) -> dict:
     par_filiere : par code filière, moyenne des taux cumulés des étudiants ayant un planning cette semaine
     """
     ensure_planning_schema(conn)
+    ensure_groupe_column(conn)
     if not conn.execute("SELECT 1 FROM planning_seances LIMIT 1").fetchone():
         return {"top10": [], "semaines": [], "filieres": [], "par_filiere": []}
 
@@ -103,7 +97,7 @@ def taux_absence_global(conn: sqlite3.Connection) -> dict:
     derniers = []
     taux_semaine = defaultdict(lambda: defaultdict(list))  # filière -> semaine -> [taux étudiants]
     for id_et, prenom, nom, code in etudiants:
-        semaines = taux_absence_cumulatif(conn, id_et)["semaines"]
+        semaines = taux_absence_cumulatif(conn, id_et, _schema_ok=True)["semaines"]
         if not semaines:
             continue
         derniere = semaines[-1]

@@ -5,3 +5,5 @@ openpyxl
 anthropic
 python-dotenv
 PyJWT
+requests>=2.31
+bcrypt>=4.0

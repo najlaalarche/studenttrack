@@ -6,6 +6,7 @@ import ModuleBar from "../../components/ModuleBar.jsx";
 import StatutBadge from "../../components/StatutBadge.jsx";
 import TauxAbsenceChart from "../../components/TauxAbsenceChart.jsx";
 import PerformanceTile from "../../components/PerformanceTile.jsx";
+import { useAnalyseIA, BoutonAnalyseIA, CarteAnalyseIA } from "../../components/AnalyseIA.jsx";
 import {
   RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis,
   Radar, ResponsiveContainer, Tooltip,
@@ -199,6 +200,7 @@ export default function DashboardEtudiant({ idEtudiant, onLogout }) {
   const [loading, setLoading]   = useState(true);
   const [vue, setVue]           = useState("overview");
   const [semestre, setSemestre] = useState("S1");
+  const ia = useAnalyseIA("etudiant");
 
   useEffect(() => {
     async function load() {
@@ -233,6 +235,20 @@ export default function DashboardEtudiant({ idEtudiant, onLogout }) {
   const presence     = semaines.length > 0 ? semaines[semaines.length - 1].taux_presence : null;
   const absence      = semaines.length > 0 ? semaines[semaines.length - 1].taux_absence : null;
 
+  function analyserIA() {
+    ia.lancer({
+      prenom: profil.prenom,
+      taux_absence_cumule_pct: absence,
+      taux_performance_perdue_pct: perf?.taux_performance_perdue ?? null,
+      moyenne_brute: perf?.moyenne_brute ?? null,
+      moyenne_nette: perf?.moyenne_nette ?? null,
+      absences_non_justifiees: profil.total_abs_nj,
+      modules_en_alerte: profil.modules
+        .filter(m => m.statut_exam !== "AUTORISE")
+        .map(m => ({ module: m.module, statut: m.statut_exam, taux_nj_pct: m.taux_nj, taux_total_pct: m.taux_total })),
+    });
+  }
+
   const titres = { overview: "Vue d'ensemble", modules: "Modules", historique: "Historique des absences" };
 
   return (
@@ -255,6 +271,11 @@ export default function DashboardEtudiant({ idEtudiant, onLogout }) {
               <div className="w-full">
                 <PerformanceTile perf={perf} />
               </div>
+
+              <div className="mb-4 flex justify-end">
+                <BoutonAnalyseIA ia={ia} onClick={analyserIA} />
+              </div>
+              <CarteAnalyseIA ia={ia} />
 
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3" style={{ marginBottom: 24 }}>
                 <KpiCard label="Absences NJ"     value={profil.total_abs_nj}      color="#d97706" icon="⚠" />
