@@ -201,7 +201,7 @@ export default function PageGestionEtudiants() {
         <button
           onClick={() => fileInput.current?.click()}
           disabled={importing}
-          title="Colonnes attendues : nom, prenom, email, filiere, groupe, annee"
+          title="Colonnes attendues : nom, prenom, groupe (ex. IMS2G1) — email généré : prenom.nom@esith.net"
           style={{
             marginLeft: "auto", padding: "8px 16px", borderRadius: 6, fontSize: 13, fontWeight: 600,
             cursor: importing ? "not-allowed" : "pointer",
